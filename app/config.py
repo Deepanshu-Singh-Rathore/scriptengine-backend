@@ -44,3 +44,19 @@ class Settings:
 
 
 settings = Settings()
+
+# Debug: Print environment variables
+print("=" * 80)
+print("ENVIRONMENT VARIABLES DEBUG")
+print("=" * 80)
+print(f"DATABASE_URL: {settings.DATABASE_URL[:50]}..." if len(settings.DATABASE_URL) > 50 else f"DATABASE_URL: {settings.DATABASE_URL}")
+print(f"POSTGRES_HOST: {settings.POSTGRES_HOST}")
+print(f"POSTGRES_PORT: {settings.POSTGRES_PORT}")
+print(f"POSTGRES_DB: {settings.POSTGRES_DB}")
+print(f"POSTGRES_USER: {settings.POSTGRES_USER}")
+print(f"POSTGRES_PASSWORD: {'*' * len(settings.POSTGRES_PASSWORD) if settings.POSTGRES_PASSWORD else 'NOT SET'}")
+print(f"POSTGRES_SCHEMA: {settings.POSTGRES_SCHEMA}")
+print(f"GEMINI_API_KEY: {'SET' if settings.GEMINI_API_KEY else 'NOT SET'}")
+print(f"JWT_SECRET_KEY: {'SET' if settings.JWT_SECRET_KEY else 'NOT SET'}")
+print(f"GITHUB_REPO_PATH: {settings.GITHUB_REPO_PATH}")
+print("=" * 80)
