@@ -508,3 +508,45 @@ async def preview_transformation(
         warnings=warnings if warnings else None
     )
 
+
+class ExportRequest(BaseModel):
+    """Export script request."""
+    script_content: str
+    user_input: str
+    file_type: Optional[str] = None
+
+
+@router.post("/export")
+async def export_script(request: ExportRequest):
+    """
+    Export generated script as a downloadable Python file.
+    
+    Args:
+        request: Export request with script content and metadata
+    
+    Returns:
+        Python file content with proper headers and CLI support
+    """
+    from app.utils.export_helpers import generate_python_file
+    from fastapi.responses import Response
+    from datetime import datetime
+    
+    # Generate the Python file content
+    python_content = generate_python_file(
+        script_content=request.script_content,
+        user_input=request.user_input,
+        file_type=request.file_type
+    )
+    
+    # Generate filename with timestamp
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    filename = f"script_engine_{timestamp}.py"
+    
+    # Return as downloadable file
+    return Response(
+        content=python_content,
+        media_type="text/x-python",
+        headers={
+            "Content-Disposition": f'attachment; filename="{filename}"'
+        }
+    )
