@@ -514,22 +514,26 @@ class ExportRequest(BaseModel):
     script_content: str
     user_input: str
     file_type: Optional[str] = None
+    config_content: Optional[str] = None
 
 
 @router.post("/export")
 async def export_script(request: ExportRequest):
     """
     Export generated script as a downloadable Python file.
+    If config is provided, returns a ZIP with both script and config.
     
     Args:
         request: Export request with script content and metadata
     
     Returns:
-        Python file content with proper headers and CLI support
+        Python file or ZIP archive with script and config
     """
     from app.utils.export_helpers import generate_python_file
     from fastapi.responses import Response
     from datetime import datetime
+    import zipfile
+    import io
     
     # Generate the Python file content
     python_content = generate_python_file(
@@ -540,13 +544,35 @@ async def export_script(request: ExportRequest):
     
     # Generate filename with timestamp
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    filename = f"script_engine_{timestamp}.py"
     
-    # Return as downloadable file
-    return Response(
-        content=python_content,
-        media_type="text/x-python",
-        headers={
-            "Content-Disposition": f'attachment; filename="{filename}"'
-        }
-    )
+    # If config exists, create a ZIP with both files
+    if request.config_content:
+        # Create ZIP in memory
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
+            # Add Python script
+            zip_file.writestr(f"script_engine_{timestamp}.py", python_content)
+            # Add config file
+            zip_file.writestr("config.json", request.config_content)
+        
+        zip_buffer.seek(0)
+        filename = f"script_engine_{timestamp}.zip"
+        
+        return Response(
+            content=zip_buffer.getvalue(),
+            media_type="application/zip",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
+    else:
+        # Return just the Python file
+        filename = f"script_engine_{timestamp}.py"
+        
+        return Response(
+            content=python_content,
+            media_type="text/x-python",
+            headers={
+                "Content-Disposition": f'attachment; filename="{filename}"'
+            }
+        )
