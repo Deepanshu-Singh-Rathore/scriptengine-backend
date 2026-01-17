@@ -1,0 +1,14 @@
+{
+  "csv": {
+    "file_mask": "*.csv",
+    "rename_file": "renamed"
+  },
+  "xlsx": {
+    "file_mask": "*.xlsx",
+    "rename_file": ""
+  },
+  "zip": {
+    "file_mask": "*.zip",
+    "rename_file": ""
+  }
+}

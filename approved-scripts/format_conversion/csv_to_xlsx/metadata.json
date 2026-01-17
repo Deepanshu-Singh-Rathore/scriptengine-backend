@@ -1,0 +1,17 @@
+{
+  "script_type": "format_conversion",
+  "file_type": "CSV",
+  "domain": "MDLZ",
+  "intent": [
+    "format_conversion",
+    "csv_to_xlsx"
+  ],
+  "logic_capabilities": [
+    "convert csv to excel format"
+  ],
+  "description": "Convert CSV files to XLSX format",
+  "config_path": "/mnt/scratch/scripts/config.json",
+  "version": "1.0",
+  "approved_by": "data-platform-team",
+  "tags": ["reusable", "format_conversion"]
+}

@@ -1,0 +1,20 @@
+{
+  "script_type": "conversion",
+  "file_type": "CSV",
+  "domain": "MDLZ",
+  "intent": [
+    "type_casting",
+    "normalization",
+    "null_handling"
+  ],
+  "logic_capabilities": [
+    "cast numeric fields",
+    "normalize date formats",
+    "handle null values"
+  ],
+  "description": "Generic CSV ETL normalization logic with type casting and null handling",
+  "config_path": "/mnt/scratch/scripts/config.json",
+  "version": "1.0",
+  "approved_by": "data-platform-team",
+  "tags": ["reusable", "normalization", "csv"]
+}

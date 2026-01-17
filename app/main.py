@@ -1,0 +1,57 @@
+"""
+FastAPI main application entry point.
+"""
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from app.routers import scripts, search, auth
+from app.database import init_db
+
+app = FastAPI(
+    title="Conversion AI",
+    description="Local, reuse-first script generator powered by Gemini",
+    version="1.0.0"
+)
+
+# CORS middleware for local development
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:3000",
+        "http://localhost:8000",
+        "http://127.0.0.1:3000",
+        "http://127.0.0.1:8000",
+        "http://0.0.0.0:3000",
+        "http://0.0.0.0:8000",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+    expose_headers=["*"],
+)
+
+# Include routers
+app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
+app.include_router(scripts.router, prefix="/api/scripts", tags=["scripts"])
+app.include_router(search.router, prefix="/api/search", tags=["search"])
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize database on startup."""
+    await init_db()
+
+
+@app.get("/")
+async def root():
+    """Health check endpoint."""
+    return {"status": "ok", "message": "Conversion AI API"}
+
+
+@app.get("/api/health")
+async def health():
+    """Detailed health check."""
+    return {
+        "status": "healthy",
+        "service": "conversion-ai",
+        "version": "1.0.0"
+    }

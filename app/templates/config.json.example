@@ -1,0 +1,10 @@
+{
+  "csv": {
+    "file_mask": "*.csv",
+    "rename_file": "output"
+  },
+  "xlsx": {
+    "file_mask": "*.xlsx",
+    "rename_file": "output"
+  }
+}

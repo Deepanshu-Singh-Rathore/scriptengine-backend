@@ -1,0 +1,25 @@
+{
+  "script_type": "etl",
+  "source_format": "multi",
+  "target_format": "csv",
+  "domain": "gcs_etl",
+  "intent": [
+    "remove quotes from csv",
+    "strip quotes from csv files",
+    "clean csv data",
+    "csv cleaning"
+  ],
+  "description": "ETL script for CSV file processing. Removes quotes from CSV files, cleans CSV data, and supports optional file renaming.",
+  "tags": [
+    "csv"
+  ],
+  "repo_path": "etl/multi_format_etl/script.py",
+  "config_path": "etl/multi_format_etl/config.json.example",
+  "version": "1.0.0",
+  "supported_file_types": ["csv", "xlsx", "zip"],
+  "features": [
+    "CSV cleaning",
+    "Remove quotes from CSV files",
+    "Optional file renaming"
+  ]
+}
