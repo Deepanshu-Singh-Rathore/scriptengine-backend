@@ -25,15 +25,15 @@ def validate_generated_code(code: str, expected_function: str) -> Tuple[bool, st
     # No imports allowed
     if re.search(r'^import\s+|^from\s+', code, re.MULTILINE):
         return False, "Code must not contain imports"
-    
-    # No IO operations
+    # Check for dangerous IO operations (but allow to_csv/to_excel for format conversion)
     io_patterns = [
         r'open\s*\(',
         r'read_csv\s*\(',
         r'read_excel\s*\(',
-        r'to_csv\s*\(',
-        r'to_excel\s*\(',
-        r'write\s*\(',
+        r'read_json\s*\(',
+        r'to_json\s*\(',
+        r'to_parquet\s*\(',
+        r'to_sql\s*\(',
         r'\.read\s*\(',
         r'\.write\s*\(',
     ]
