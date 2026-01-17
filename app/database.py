@@ -51,21 +51,33 @@ SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 async def init_db():
     """Initialize database tables."""
-    with engine.connect() as conn:
-        # Create schema if it doesn't exist
-        conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {settings.POSTGRES_SCHEMA}"))
-        conn.commit()
+    try:
+        print("Attempting to connect to database...")
+        with engine.connect() as conn:
+            # Create schema if it doesn't exist
+            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {settings.POSTGRES_SCHEMA}"))
+            conn.commit()
+            
+            # Enable pgvector extension in public schema (extensions are database-wide)
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public"))
+            conn.commit()
+            
+            # Set search_path to include both schemas (test01 first, then public for vector type)
+            conn.execute(text(f"SET search_path TO {settings.POSTGRES_SCHEMA}, public"))
+            conn.commit()
         
-        # Enable pgvector extension in public schema (extensions are database-wide)
-        conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public"))
-        conn.commit()
-        
-        # Set search_path to include both schemas (test01 first, then public for vector type)
-        conn.execute(text(f"SET search_path TO {settings.POSTGRES_SCHEMA}, public"))
-        conn.commit()
-    
-    # Create tables in the specified schema
-    Base.metadata.create_all(bind=engine)
+        # Create tables in the specified schema
+        Base.metadata.create_all(bind=engine)
+        print("✓ Database initialized successfully!")
+    except Exception as e:
+        print("=" * 80)
+        print("⚠️  WARNING: Database connection failed!")
+        print(f"Error: {str(e)}")
+        print("The application will start but database features will not work.")
+        print("Please check your DATABASE_URL and network connectivity.")
+        print("=" * 80)
+        # Don't raise the exception - allow the app to start anyway
+
 
 
 def get_db():
