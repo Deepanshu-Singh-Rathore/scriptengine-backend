@@ -24,8 +24,29 @@ router = APIRouter()
 class ScriptRequest(BaseModel):
     """Script generation request."""
     user_input: str
+    template_id: Optional[str] = None  # Manual template selection
     schema_info: Optional[Dict] = None
     file_type: Optional[str] = None
+
+
+class SearchRequest(BaseModel):
+    """Search approved scripts request."""
+    query: str
+    limit: int = 10
+
+
+class SearchResult(BaseModel):
+    """Individual search result."""
+    repo_path: str
+    similarity: float
+    script_type: str
+    description: Optional[str] = None
+
+
+class SearchResponse(BaseModel):
+    """Search response with matching scripts."""
+    results: List[SearchResult]
+    total: int
 
 
 class ScriptResponse(BaseModel):
@@ -116,9 +137,21 @@ async def generate_script(
     db: Session = Depends(get_db)
 ):
     """Generate or reuse a script."""
-    # Classify intent
-    script_type = IntentClassifier.classify(request.user_input)
-    print(f"📋 Classified intent as: {script_type} for input: '{request.user_input}'")
+    # Use template_id if provided, otherwise classify intent
+    if request.template_id:
+        # Map template_id to script_type
+        template_to_script_type = {
+            "csv_etl": "conversion",
+            "xlsx_etl": "conversion",
+            "xlsx_to_csv": "format_conversion",
+            "csv_to_xlsx": "format_conversion"
+        }
+        script_type = template_to_script_type.get(request.template_id, "conversion")
+        print(f"📋 Using selected template: {request.template_id} -> {script_type}")
+    else:
+        # Classify intent from user input
+        script_type = IntentClassifier.classify(request.user_input)
+        print(f"📋 Classified intent as: {script_type} for input: '{request.user_input}'")
     
     # Build intent summary
     search_service = SearchService()
@@ -418,8 +451,26 @@ async def generate_script(
     print(f"✅ Final indented code:\n{indented_code}")
     
     # Generate full script from template
+    # Derive file_type and conversion_type from template_id
+    file_type = request.file_type  # Default from request
     conversion_type = None
-    if script_type == "format_conversion":
+    
+    if request.template_id:
+        # Map template_id to file_type and conversion_type
+        template_file_type_map = {
+            "csv_etl": "csv",
+            "xlsx_etl": "xlsx",
+            "xlsx_to_csv": None,  # Uses conversion_type instead
+            "csv_to_xlsx": None   # Uses conversion_type instead
+        }
+        template_conversion_type_map = {
+            "xlsx_to_csv": "xlsx_to_csv",
+            "csv_to_xlsx": "csv_to_xlsx"
+        }
+        file_type = template_file_type_map.get(request.template_id) or file_type
+        conversion_type = template_conversion_type_map.get(request.template_id)
+        print(f"📄 Template {request.template_id} -> file_type={file_type}, conversion_type={conversion_type}")
+    elif script_type == "format_conversion":
         if "csv to xlsx" in request.user_input.lower():
             conversion_type = "csv_to_xlsx"
         elif "xlsx to csv" in request.user_input.lower():
@@ -427,7 +478,7 @@ async def generate_script(
     
     script_content = TemplateEngine.generate_script(
         script_type,
-        request.file_type,
+        file_type,
         indented_code,
         conversion_type
     )
@@ -576,3 +627,48 @@ async def export_script(request: ExportRequest):
                 "Content-Disposition": f'attachment; filename="{filename}"'
             }
         )
+
+
+@router.post("/search", response_model=SearchResponse)
+async def search_scripts(
+    request: SearchRequest,
+    db: Session = Depends(get_db)
+):
+    """
+    Search for similar approved scripts.
+    
+    Args:
+        request: Search query and limit
+        db: Database session
+    
+    Returns:
+        List of matching scripts with similarity scores
+    """
+    from app.services.search_service import SearchService
+    
+    search_service = SearchService()
+    
+    # Build intent summary from query
+    intent_summary = await search_service.build_intent_summary(request.query, None)
+    
+    # Search for similar scripts (lowering threshold for search)
+    similar_scripts = await search_service.search_all_similar(
+        db,
+        request.query,
+        intent_summary,
+        limit=request.limit
+    )
+    
+    results = []
+    for script in similar_scripts:
+        results.append(SearchResult(
+            repo_path=script.get("repo_path", ""),
+            similarity=script.get("similarity", 0.0),
+            script_type=script.get("script_type", "unknown"),
+            description=script.get("description")
+        ))
+    
+    return SearchResponse(
+        results=results,
+        total=len(results)
+    )

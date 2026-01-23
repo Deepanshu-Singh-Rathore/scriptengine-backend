@@ -3,11 +3,11 @@ FastAPI main application entry point.
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from app.routers import scripts, search, auth
+from app.routers import scripts, search, auth, templates
 from app.database import init_db
 
 app = FastAPI(
-    title="Conversion AI",
+    title="Script Engine",
     description="Local, reuse-first script generator powered by Gemini",
     version="1.0.0"
 )
@@ -35,6 +35,7 @@ app.add_middleware(
 app.include_router(auth.router, prefix="/api/auth", tags=["authentication"])
 app.include_router(scripts.router, prefix="/api/scripts", tags=["scripts"])
 app.include_router(search.router, prefix="/api/search", tags=["search"])
+app.include_router(templates.router, prefix="/api/templates", tags=["templates"])
 
 
 @app.on_event("startup")

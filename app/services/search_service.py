@@ -189,3 +189,131 @@ class SearchService:
                 print(f"❌ No matching scripts found for type: {script_type}")
         
         return None
+
+    async def search_all_similar(
+        self,
+        db: Session,
+        intent: str,
+        intent_summary: str,
+        limit: int = 10
+    ) -> List[Dict]:
+        """
+        Search for all similar approved scripts (for search UI).
+        Returns multiple results sorted by similarity.
+        
+        Args:
+            db: Database session
+            intent: User's search query
+            intent_summary: Summary for embedding
+            limit: Maximum results to return
+        
+        Returns:
+            List of matching scripts with similarity scores
+        """
+        # Try embedding-based search first
+        try:
+            embedding = await self.llm_client.embed(intent_summary)
+            embedding_str = "[" + ",".join(map(str, embedding)) + "]"
+            
+            query = text("""
+                SELECT 
+                    id, script_type, source_format, target_format, domain,
+                    intent, description, tags, repo_path, config_path, version,
+                    1 - (embedding <=> :embedding::vector) as similarity
+                FROM approved_scripts
+                WHERE embedding IS NOT NULL
+                ORDER BY embedding <=> :embedding::vector
+                LIMIT :limit
+            """)
+            
+            results = db.execute(
+                query,
+                {"embedding": embedding_str, "limit": limit}
+            ).fetchall()
+            
+            return [
+                {
+                    "id": str(r.id),
+                    "script_type": r.script_type,
+                    "source_format": r.source_format,
+                    "target_format": r.target_format,
+                    "domain": r.domain,
+                    "intent": r.intent,
+                    "description": r.description,
+                    "tags": r.tags,
+                    "repo_path": r.repo_path,
+                    "config_path": r.config_path,
+                    "version": r.version,
+                    "similarity": float(r.similarity)
+                }
+                for r in results if r.similarity >= 0.3  # Lower threshold for search
+            ]
+        except Exception as e:
+            print(f"Warning: Embedding search failed, using text-based: {e}")
+            return await self._text_based_search_all(db, intent, limit)
+
+    async def _text_based_search_all(
+        self,
+        db: Session,
+        intent: str,
+        limit: int = 10
+    ) -> List[Dict]:
+        """
+        Text-based search returning multiple results.
+        """
+        intent_lower = intent.lower()
+        intent_words = set(intent_lower.split())
+        
+        if not intent_words:
+            return []
+        
+        scripts = db.query(ApprovedScript).all()
+        scored_scripts = []
+        
+        for script in scripts:
+            all_text_parts = []
+            if script.intent:
+                all_text_parts.extend([i.lower() for i in script.intent])
+            if script.description:
+                all_text_parts.append(script.description.lower())
+            if script.tags:
+                all_text_parts.extend([t.lower() for t in script.tags])
+            
+            combined_text = " ".join(all_text_parts)
+            combined_words = set(combined_text.split())
+            
+            matching_words = intent_words.intersection(combined_words)
+            word_similarity = len(matching_words) / len(intent_words) if intent_words else 0
+            
+            # Phrase match boost
+            phrase_match = False
+            for script_intent in (script.intent or []):
+                if intent_lower in script_intent.lower() or script_intent.lower() in intent_lower:
+                    phrase_match = True
+                    break
+            
+            similarity = min(word_similarity + (0.2 if phrase_match else 0), 1.0)
+            
+            if similarity >= 0.3:  # Lower threshold for search
+                scored_scripts.append((script, similarity))
+        
+        # Sort by similarity descending
+        scored_scripts.sort(key=lambda x: x[1], reverse=True)
+        
+        return [
+            {
+                "id": str(script.id),
+                "script_type": script.script_type,
+                "source_format": script.source_format,
+                "target_format": script.target_format,
+                "domain": script.domain,
+                "intent": script.intent,
+                "description": script.description,
+                "tags": script.tags,
+                "repo_path": script.repo_path,
+                "config_path": script.config_path,
+                "version": script.version,
+                "similarity": similarity
+            }
+            for script, similarity in scored_scripts[:limit]
+        ]
