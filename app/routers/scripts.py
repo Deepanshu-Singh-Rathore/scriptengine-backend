@@ -483,13 +483,18 @@ async def generate_script(
         conversion_type
     )
     
-    # Write to _pending folder
-    pending_dir = Path(settings.PENDING_PATH) / script_type
-    pending_dir.mkdir(parents=True, exist_ok=True)
-    
-    script_filename = f"generated_{script_type}_{hash(request.user_input)}.py"
-    script_path = pending_dir / script_filename
-    script_path.write_text(script_content)
+    # Write to _pending folder only if storage is enabled
+    script_path = None
+    if settings.STORE_GENERATED_SCRIPTS:
+        pending_dir = Path(settings.PENDING_PATH) / script_type
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        
+        script_filename = f"generated_{script_type}_{hash(request.user_input)}.py"
+        script_path = pending_dir / script_filename
+        script_path.write_text(script_content)
+        print(f"💾 Script saved to: {script_path}")
+    else:
+        print("⏭️ Script storage disabled (STORE_GENERATED_SCRIPTS=false)")
     
     # Get config and usage instructions
     config_content, usage_instructions = _get_config_and_instructions(script_type, conversion_type)
@@ -498,7 +503,7 @@ async def generate_script(
         script_type=script_type,
         script_content=script_content,
         reused=False,
-        repo_path=str(script_path.relative_to(settings.GITHUB_REPO_PATH)),
+        repo_path=str(script_path.relative_to(settings.GITHUB_REPO_PATH)) if script_path else None,
         config_content=config_content,
         usage_instructions=usage_instructions
     )

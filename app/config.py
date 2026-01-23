@@ -41,6 +41,9 @@ class Settings:
     MAX_UPLOAD_SIZE_MB: int = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50"))
     PREVIEW_SAMPLE_SIZE: int = int(os.getenv("PREVIEW_SAMPLE_SIZE", "100"))
     PREVIEW_TIMEOUT_SECONDS: int = int(os.getenv("PREVIEW_TIMEOUT_SECONDS", "5"))
+    
+    # Script storage - set to False to disable saving AI-generated scripts to disk
+    STORE_GENERATED_SCRIPTS: bool = os.getenv("STORE_GENERATED_SCRIPTS", "false").lower() == "true"
 
 
 settings = Settings()
