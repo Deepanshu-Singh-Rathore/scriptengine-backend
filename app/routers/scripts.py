@@ -32,6 +32,7 @@ class ScriptRequest(BaseModel):
 class SearchRequest(BaseModel):
     """Search approved scripts request."""
     query: str
+    script_type: Optional[str] = None  # Filter by script type directly
     limit: int = 10
 
 
@@ -656,12 +657,13 @@ async def search_scripts(
     # Build intent summary from query
     intent_summary = await search_service.build_intent_summary(request.query, None)
     
-    # Search for similar scripts (lowering threshold for search)
+    # Search for similar scripts (filter by script_type if provided)
     similar_scripts = await search_service.search_all_similar(
         db,
         request.query,
         intent_summary,
-        limit=request.limit
+        limit=request.limit,
+        script_type=request.script_type  # Pass directly
     )
     
     results = []

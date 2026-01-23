@@ -195,7 +195,8 @@ class SearchService:
         db: Session,
         intent: str,
         intent_summary: str,
-        limit: int = 10
+        limit: int = 10,
+        script_type: Optional[str] = None
     ) -> List[Dict]:
         """
         Search for all similar approved scripts (for search UI).
@@ -206,6 +207,7 @@ class SearchService:
             intent: User's search query
             intent_summary: Summary for embedding
             limit: Maximum results to return
+            script_type: Optional filter by script type
         
         Returns:
             List of matching scripts with similarity scores
@@ -215,16 +217,33 @@ class SearchService:
             embedding = await self.llm_client.embed(intent_summary)
             embedding_str = "[" + ",".join(map(str, embedding)) + "]"
             
-            query = text("""
-                SELECT 
-                    id, script_type, source_format, target_format, domain,
-                    intent, description, tags, repo_path, config_path, version,
-                    1 - (embedding <=> :embedding::vector) as similarity
-                FROM approved_scripts
-                WHERE embedding IS NOT NULL
-                ORDER BY embedding <=> :embedding::vector
-                LIMIT :limit
-            """)
+            # Build query with optional script_type filter
+            if script_type:
+                query = text("""
+                    SELECT 
+                        id, script_type, source_format, target_format, domain,
+                        intent, description, tags, repo_path, config_path, version,
+                        1 - (embedding <=> :embedding::vector) as similarity
+                    FROM approved_scripts
+                    WHERE embedding IS NOT NULL AND script_type = :script_type
+                    ORDER BY embedding <=> :embedding::vector
+                    LIMIT :limit
+                """)
+                results = db.execute(
+                    query,
+                    {"embedding": embedding_str, "limit": limit, "script_type": script_type}
+                ).fetchall()
+            else:
+                query = text("""
+                    SELECT 
+                        id, script_type, source_format, target_format, domain,
+                        intent, description, tags, repo_path, config_path, version,
+                        1 - (embedding <=> :embedding::vector) as similarity
+                    FROM approved_scripts
+                    WHERE embedding IS NOT NULL
+                    ORDER BY embedding <=> :embedding::vector
+                    LIMIT :limit
+                """)
             
             results = db.execute(
                 query,
