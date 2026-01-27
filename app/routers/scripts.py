@@ -800,8 +800,9 @@ async def get_script(request: GetScriptRequest):
     # Resolve repo base path
     repo_base = Path(settings.GITHUB_REPO_PATH)
     if not repo_base.is_absolute():
+        # For relative paths like ./approved-scripts, resolve from backend directory
         backend_dir = Path(__file__).parent.parent.parent
-        repo_base = backend_dir.parent / repo_base
+        repo_base = backend_dir / repo_base
     
     repo_base = repo_base.resolve()
     script_path = repo_base / request.repo_path
