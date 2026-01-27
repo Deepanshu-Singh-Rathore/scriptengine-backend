@@ -26,10 +26,9 @@ def main():
     
     repo_path = Path(repo_path_str)
     
-    # If not absolute, make it relative to project root (backend's parent)
+    # If not absolute, make it relative to backend directory (where this script lives)
     if not repo_path.is_absolute():
-        project_root = backend_dir.parent
-        repo_path = project_root / repo_path_str
+        repo_path = backend_dir / repo_path_str
     
     # Normalize the path
     repo_path = repo_path.resolve()
