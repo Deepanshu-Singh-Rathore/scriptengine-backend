@@ -47,7 +47,7 @@ async def search_scripts(
     search_service = SearchService()
     
     # Build intent summary
-    intent_summary = await search_service.build_intent_summary(request.query)
+    intent_summary = search_service.build_intent_summary(request.query)
     
     # Generate embedding
     embedding = await search_service.llm_client.embed(intent_summary)

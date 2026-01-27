@@ -41,7 +41,7 @@ app.include_router(templates.router, prefix="/api/templates", tags=["templates"]
 @app.on_event("startup")
 async def startup_event():
     """Initialize database on startup."""
-    await init_db()
+    init_db()
 
 
 @app.get("/")

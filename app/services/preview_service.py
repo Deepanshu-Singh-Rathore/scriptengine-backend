@@ -79,6 +79,99 @@ def read_sample_data(
         )
 
 
+def _normalize_indentation(code: str) -> str:
+    """
+    Normalize indentation by removing common leading whitespace.
+    
+    Args:
+        code: Code string to normalize
+    
+    Returns:
+        Code with normalized indentation
+    """
+    lines = code.split('\n')
+    # Find minimum indentation (excluding empty lines)
+    non_empty_indents = [
+        len(line) - len(line.lstrip())
+        for line in lines if line.strip()
+    ]
+    
+    if not non_empty_indents:
+        return code
+    
+    min_indent = min(non_empty_indents)
+    normalized_lines = [
+        line[min_indent:] if line.strip() else ''
+        for line in lines
+    ]
+    return '\n'.join(normalized_lines)
+
+
+def _set_timeout(timeout_seconds: int) -> None:
+    """Set execution timeout using SIGALRM if available."""
+    if hasattr(signal, 'SIGALRM'):
+        signal.signal(signal.SIGALRM, timeout_handler)
+        signal.alarm(timeout_seconds)
+
+
+def _cancel_timeout() -> None:
+    """Cancel any pending timeout alarm."""
+    if hasattr(signal, 'SIGALRM'):
+        signal.alarm(0)
+
+
+def _validate_result(result_df, warnings: List[str]) -> Tuple[pd.DataFrame, List[str]]:
+    """
+    Validate the transformation result and collect warnings.
+    
+    Args:
+        result_df: The result from code execution
+        warnings: List to append warnings to
+    
+    Returns:
+        Tuple of (validated DataFrame, warnings)
+    
+    Raises:
+        HTTPException: If result is invalid
+    """
+    if result_df is None:
+        raise HTTPException(
+            status_code=400,
+            detail="Transformation did not return a DataFrame"
+        )
+    
+    if not isinstance(result_df, pd.DataFrame):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Transformation returned {type(result_df).__name__} instead of DataFrame"
+        )
+    
+    if len(result_df) == 0:
+        warnings.append("Transformation resulted in empty DataFrame")
+    
+    if len(result_df.columns) == 0:
+        warnings.append("Transformation resulted in DataFrame with no columns")
+    
+    return result_df, warnings
+
+
+def _create_safe_namespace(df_copy: pd.DataFrame) -> dict:
+    """Create a restricted namespace for safe code execution."""
+    return {
+        'pd': pd,
+        'np': np,
+        'df': df_copy,
+        '__builtins__': __builtins__,
+        'open': None,
+        'eval': None,
+        'exec': None,
+        'compile': None,
+        '__import__': None,
+        'input': None,
+        'file': None,
+    }
+
+
 def execute_transformation(
     df: pd.DataFrame,
     function_code: str
@@ -97,109 +190,41 @@ def execute_transformation(
         HTTPException: If code execution fails
     """
     warnings = []
-    
-    # Create a copy to avoid modifying original
     df_copy = df.copy()
-    
-    # Create safe namespace with restricted globals
-    # We allow builtins but restrict dangerous modules via globals
-    safe_namespace = {
-        'pd': pd,
-        'np': np,
-        'df': df_copy,
-        '__builtins__': __builtins__,
-        # Block dangerous modules
-        'open': None,
-        'eval': None,
-        'exec': None,
-        'compile': None,
-        '__import__': None,
-        'input': None,
-        'file': None,
-    }
+    safe_namespace = _create_safe_namespace(df_copy)
     
     try:
-        # Set timeout alarm (Unix only)
-        if hasattr(signal, 'SIGALRM'):
-            signal.signal(signal.SIGALRM, timeout_handler)
-            signal.alarm(settings.PREVIEW_TIMEOUT_SECONDS)
+        _set_timeout(settings.PREVIEW_TIMEOUT_SECONDS)
         
-        # Normalize indentation of function_code
-        # Remove common leading whitespace
-        lines = function_code.split('\n')
-        # Find minimum indentation (excluding empty lines)
-        min_indent = float('inf')
-        for line in lines:
-            if line.strip():  # Skip empty lines
-                indent = len(line) - len(line.lstrip())
-                min_indent = min(min_indent, indent)
-        
-        # Remove the minimum indentation from all lines
-        if min_indent < float('inf'):
-            normalized_lines = []
-            for line in lines:
-                if line.strip():  # Non-empty line
-                    normalized_lines.append(line[min_indent:])
-                else:  # Empty line
-                    normalized_lines.append('')
-            function_code = '\n'.join(normalized_lines)
-        
-        # Wrap code in a function and execute
+        normalized_code = _normalize_indentation(function_code)
         wrapped_code = f"""
 def transform(df):
-{_indent_code(function_code, 1)}
+{_indent_code(normalized_code, 1)}
     return df
 
 result = transform(df)
 """
         
-        # Execute code in restricted namespace
         exec(wrapped_code, safe_namespace)
+        _cancel_timeout()
         
-        # Cancel timeout
-        if hasattr(signal, 'SIGALRM'):
-            signal.alarm(0)
-        
-        # Get result
         result_df = safe_namespace.get('result')
-        
-        if result_df is None:
-            raise HTTPException(
-                status_code=400,
-                detail="Transformation did not return a DataFrame"
-            )
-        
-        if not isinstance(result_df, pd.DataFrame):
-            raise HTTPException(
-                status_code=400,
-                detail=f"Transformation returned {type(result_df).__name__} instead of DataFrame"
-            )
-        
-        # Check for common issues
-        if len(result_df) == 0:
-            warnings.append("Transformation resulted in empty DataFrame")
-        
-        if len(result_df.columns) == 0:
-            warnings.append("Transformation resulted in DataFrame with no columns")
-        
-        return result_df, warnings
+        return _validate_result(result_df, warnings)
     
     except TimeoutException:
         raise HTTPException(
             status_code=400,
             detail=f"Code execution timed out after {settings.PREVIEW_TIMEOUT_SECONDS} seconds"
         )
+    except HTTPException:
+        raise
     except Exception as e:
-        if isinstance(e, HTTPException):
-            raise
         raise HTTPException(
             status_code=400,
             detail=f"Error executing transformation: {str(e)}"
         )
     finally:
-        # Always cancel timeout
-        if hasattr(signal, 'SIGALRM'):
-            signal.alarm(0)
+        _cancel_timeout()
 
 
 def dataframe_to_json(df: pd.DataFrame, max_rows: Optional[int] = None) -> Dict:

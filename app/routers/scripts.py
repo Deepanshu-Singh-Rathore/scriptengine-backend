@@ -4,7 +4,7 @@ Script generation and management endpoints.
 from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form
 from sqlalchemy.orm import Session
 from pydantic import BaseModel
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Tuple
 from pathlib import Path
 import os
 import time
@@ -19,6 +19,10 @@ from app.config import settings
 from app.services import preview_service
 
 router = APIRouter()
+
+# Constants for markdown code fence removal
+MARKDOWN_PYTHON_FENCE = '```python'
+MARKDOWN_FENCE_END = '```'
 
 
 class ScriptRequest(BaseModel):
@@ -132,15 +136,9 @@ python script.py
     return config_content, usage_instructions
 
 
-@router.post("/generate", response_model=ScriptResponse)
-async def generate_script(
-    request: ScriptRequest,
-    db: Session = Depends(get_db)
-):
-    """Generate or reuse a script."""
-    # Use template_id if provided, otherwise classify intent
+def _classify_script_type(request: ScriptRequest) -> str:
+    """Classify script type from request template_id or user input."""
     if request.template_id:
-        # Map template_id to script_type
         template_to_script_type = {
             "csv_etl": "conversion",
             "xlsx_etl": "conversion",
@@ -150,18 +148,23 @@ async def generate_script(
         script_type = template_to_script_type.get(request.template_id, "conversion")
         print(f"📋 Using selected template: {request.template_id} -> {script_type}")
     else:
-        # Classify intent from user input
         script_type = IntentClassifier.classify(request.user_input)
         print(f"📋 Classified intent as: {script_type} for input: '{request.user_input}'")
-    
-    # Build intent summary
+    return script_type
+
+
+async def _try_reuse_existing_script(
+    db: Session,
+    request: ScriptRequest,
+    script_type: str
+) -> Optional[ScriptResponse]:
+    """Search for and return an existing similar script if found."""
     search_service = SearchService()
-    intent_summary = await search_service.build_intent_summary(
+    intent_summary = search_service.build_intent_summary(
         request.user_input,
         request.schema_info
     )
     
-    # Search for similar approved script
     similar_script = await search_service.search_similar(
         db,
         request.user_input,
@@ -172,37 +175,372 @@ async def generate_script(
     if similar_script:
         print(f"🔍 Search result: Found match with {similar_script['similarity']:.2%} similarity (threshold: 80%)")
     else:
-        print(f"🔍 Search result: No match found (threshold: 80%)")
+        print("🔍 Search result: No match found (threshold: 80%)")
+        return None
     
-    # If similar script found, reuse it
-    if similar_script:
-        # Read script from repo
-        repo_base = Path(settings.GITHUB_REPO_PATH)
-        if not repo_base.is_absolute():
-            # If relative, make it relative to project root
-            backend_dir = Path(__file__).parent.parent.parent
-            repo_base = backend_dir.parent / repo_base
+    # Read script from repo
+    repo_base = Path(settings.GITHUB_REPO_PATH)
+    if not repo_base.is_absolute():
+        backend_dir = Path(__file__).parent.parent.parent
+        repo_base = backend_dir.parent / repo_base
+    
+    script_path = repo_base / similar_script["repo_path"]
+    
+    if not script_path.exists():
+        print(f"Warning: Script file not found at {script_path}")
+        return None
+    
+    script_content = script_path.read_text()
+    config_content, usage_instructions = _get_config_and_instructions(script_type)
+    
+    return ScriptResponse(
+        script_type=script_type,
+        script_content=script_content,
+        reused=True,
+        similarity=similar_script["similarity"],
+        repo_path=similar_script["repo_path"],
+        config_content=config_content,
+        usage_instructions=usage_instructions
+    )
+
+
+def _is_function_end(line: str, stripped: str) -> bool:
+    """Check if a line marks the end of a function definition."""
+    # Non-empty line at column 0 (no indentation) ends the function
+    if stripped and not line.startswith(' ') and not line.startswith('\t'):
+        return True
+    # New def/class at column 0 ends the function
+    if stripped.startswith('def ') or stripped.startswith('class '):
+        indent_level = len(line) - len(line.lstrip())
+        if indent_level == 0:
+            return True
+    return False
+
+
+def _process_function_lines(lines: list, function_name: str) -> list:
+    """Process lines and extract those belonging to the function."""
+    function_lines = []
+    in_function = False
+    
+    for line in lines:
+        stripped = line.strip()
         
-        script_path = repo_base / similar_script["repo_path"]
+        # Skip leading empty lines before function starts
+        if not in_function and not stripped:
+            continue
         
-        if script_path.exists():
-            script_content = script_path.read_text()
-            # Get config and usage instructions
-            config_content, usage_instructions = _get_config_and_instructions(script_type)
-            
-            return ScriptResponse(
-                script_type=script_type,
-                script_content=script_content,
-                reused=True,
-                similarity=similar_script["similarity"],
-                repo_path=similar_script["repo_path"],
-                config_content=config_content,
-                usage_instructions=usage_instructions
-            )
+        # Start capturing at function definition
+        if f"def {function_name}(" in line:
+            in_function = True
+            function_lines.append(line)
+            continue
+        
+        # Once in function, check for end or add line
+        if in_function:
+            if _is_function_end(line, stripped):
+                break
+            function_lines.append(line)
+    
+    return function_lines
+
+
+def _extract_function_from_code(generated_code: str, function_name: str) -> str:
+    """Extract the function definition from generated code."""
+    function_start = generated_code.find(f"def {function_name}(")
+    if function_start == -1:
+        print("⚠️ Warning: Could not find function definition, using full generated code")
+        return generated_code.replace(MARKDOWN_PYTHON_FENCE, '').replace(MARKDOWN_FENCE_END, '').strip()
+    
+    function_code = generated_code[function_start:]
+    function_code = function_code.replace(MARKDOWN_PYTHON_FENCE, '').replace(MARKDOWN_FENCE_END, '').strip()
+    
+    lines = function_code.split('\n')
+    function_lines = _process_function_lines(lines, function_name)
+    
+    result = '\n'.join(function_lines).strip()
+    print(f"🧹 Extracted function:\n{result}")
+    return result
+
+
+def _remove_imports(generated_code: str) -> str:
+    """Remove import statements from generated code."""
+    lines = generated_code.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        stripped = line.strip()
+        if not (stripped.startswith('import ') or stripped.startswith('from ')):
+            cleaned_lines.append(line)
+    return '\n'.join(cleaned_lines)
+
+
+def _is_docstring_start(stripped: str) -> bool:
+    """Check if a line starts a docstring."""
+    return stripped.startswith('"""') or stripped.startswith("'''")
+
+
+def _is_new_definition_at_root(line: str, stripped: str) -> bool:
+    """Check if line is a new def/class at root indentation level."""
+    if not stripped:
+        return False
+    if line.startswith(' ') or line.startswith('\t'):
+        return False
+    return stripped.startswith('def ') or stripped.startswith('class ')
+
+
+def _clean_duplicate_docstrings(generated_code: str, function_name: str) -> str:
+    """Remove duplicate docstrings from function definition."""
+    if f"def {function_name}(" not in generated_code:
+        return generated_code
+    
+    lines = generated_code.split('\n')
+    cleaned_function_lines = []
+    in_function = False
+    docstring_count = 0
+    
+    for line in lines:
+        stripped = line.strip()
+        
+        # Handle function definition start
+        if f"def {function_name}(" in line:
+            in_function = True
+            cleaned_function_lines.append(line)
+            continue
+        
+        if not in_function:
+            continue
+        
+        # Handle docstrings - keep only the first one
+        if _is_docstring_start(stripped):
+            docstring_count += 1
+            if docstring_count <= 1:
+                cleaned_function_lines.append(line)
+            continue
+        
+        cleaned_function_lines.append(line)
+        
+        # Stop at new definition at root level
+        if _is_new_definition_at_root(line, stripped):
+            break
+    
+    if cleaned_function_lines:
+        result = '\n'.join(cleaned_function_lines)
+        print(f"🔧 Fixed function (removed duplicates):\n{result}")
+        return result
+    return generated_code
+
+
+class _DocstringTracker:
+    """Track docstring state while parsing function bodies."""
+    
+    def __init__(self):
+        self.in_docstring = False
+        self.delimiter = None
+    
+    def check_docstring_start(self, stripped: str) -> bool:
+        """Check if line starts a docstring. Returns True if line should be skipped."""
+        if self.in_docstring:
+            return False
+        if not (stripped.startswith('"""') or stripped.startswith("'''")):
+            return False
+        
+        self.in_docstring = True
+        self.delimiter = '"""' if stripped.startswith('"""') else "'''"
+        # Check for single-line docstring
+        if stripped.count(self.delimiter) >= 2:
+            self.in_docstring = False
+        return True
+    
+    def check_docstring_end(self, stripped: str) -> bool:
+        """Check if line ends a docstring. Returns True if line should be skipped."""
+        if not self.in_docstring:
+            return False
+        if self.delimiter in stripped:
+            self.in_docstring = False
+        return True
+
+
+def _process_function_body_line(
+    line: str,
+    tracker: _DocstringTracker
+) -> tuple[bool, str]:
+    """
+    Process a single line when extracting function body.
+    
+    Returns:
+        (should_add, content): Whether to add line and what content to add
+    """
+    stripped = line.lstrip()
+    
+    # Empty lines are preserved
+    if not stripped:
+        return True, ''
+    
+    # Skip docstring lines
+    if tracker.check_docstring_start(stripped):
+        return False, ''
+    if tracker.check_docstring_end(stripped):
+        return False, ''
+    
+    return True, line
+
+
+def _extract_function_body(generated_code: str, function_name: str) -> str:
+    """Extract the body of a function, excluding docstrings."""
+    if f"def {function_name}" not in generated_code:
+        return generated_code
+    
+    lines = generated_code.split('\n')
+    body_lines = []
+    body_started = False
+    tracker = _DocstringTracker()
+    
+    for line in lines:
+        # Find function definition to start capturing
+        if not body_started:
+            if f"def {function_name}" in line:
+                body_started = True
+            continue
+        
+        should_add, content = _process_function_body_line(line, tracker)
+        if should_add:
+            body_lines.append(content)
+    
+    if body_lines:
+        result = '\n'.join(body_lines)
+        print(f"📦 Extracted function body (raw):\n{result}")
+        return result
+    return generated_code
+
+
+def _normalize_indentation(function_body: str) -> str:
+    """Normalize indentation to consistent 4-space indentation."""
+    lines = function_body.split('\n')
+    
+    # Find minimum indentation (ignoring empty lines)
+    min_indent = None
+    for line in lines:
+        stripped = line.lstrip()
+        if stripped:
+            current_indent = len(line) - len(stripped)
+            if min_indent is None or current_indent < min_indent:
+                min_indent = current_indent
+    
+    if min_indent is None:
+        min_indent = 0
+    
+    print(f"🔍 Detected minimum indentation: {min_indent} spaces")
+    
+    # Check for control flow structures
+    control_flow_keywords = ['if ', 'for ', 'while ', 'try:', 'except', 'else:', 'elif ', 'with ', 'def ']
+    has_control_flow = any(
+        any(keyword in line for keyword in control_flow_keywords)
+        for line in lines if line.strip()
+    )
+    
+    print(f"🔍 Has control flow structures: {has_control_flow}")
+    
+    # Normalize all lines
+    final_lines = []
+    for line in lines:
+        stripped = line.lstrip()
+        
+        if not stripped:
+            final_lines.append('')
+            continue
+        
+        current_indent = len(line) - len(stripped)
+        
+        if not has_control_flow:
+            new_indent = 4
+        elif current_indent == min_indent:
+            new_indent = 4
         else:
-            print(f"Warning: Script file not found at {script_path}")
+            relative_indent = current_indent - min_indent
+            new_indent = 4 + relative_indent
+        
+        final_lines.append(' ' * new_indent + stripped)
     
-    # Check if LLM generation is enabled for this type
+    result = '\n'.join(final_lines)
+    print(f"✅ Final indented code:\n{result}")
+    return result
+
+
+def _process_generated_code(generated_code: str, function_name: str) -> str:
+    """Process LLM-generated code: extract, clean, and normalize."""
+    print(f"📝 Generated code (full):\n{generated_code}")
+    
+    # Step 1: Extract function definition
+    extracted = _extract_function_from_code(generated_code, function_name)
+    
+    # Step 2: Remove markdown fences and imports
+    cleaned = extracted.replace(MARKDOWN_PYTHON_FENCE, '').replace(MARKDOWN_FENCE_END, '').strip()
+    cleaned = _remove_imports(cleaned)
+    
+    # Step 3: Clean duplicate docstrings
+    cleaned = _clean_duplicate_docstrings(cleaned, function_name)
+    
+    return cleaned
+
+
+def _get_file_type_and_conversion(request: ScriptRequest, script_type: str) -> Tuple[Optional[str], Optional[str]]:
+    """Derive file_type and conversion_type from request."""
+    file_type = request.file_type
+    conversion_type = None
+    
+    if request.template_id:
+        template_file_type_map = {
+            "csv_etl": "csv",
+            "xlsx_etl": "xlsx",
+            "xlsx_to_csv": None,
+            "csv_to_xlsx": None
+        }
+        template_conversion_type_map = {
+            "xlsx_to_csv": "xlsx_to_csv",
+            "csv_to_xlsx": "csv_to_xlsx"
+        }
+        file_type = template_file_type_map.get(request.template_id) or file_type
+        conversion_type = template_conversion_type_map.get(request.template_id)
+        print(f"📄 Template {request.template_id} -> file_type={file_type}, conversion_type={conversion_type}")
+    elif script_type == "format_conversion":
+        if "csv to xlsx" in request.user_input.lower():
+            conversion_type = "csv_to_xlsx"
+        elif "xlsx to csv" in request.user_input.lower():
+            conversion_type = "xlsx_to_csv"
+    
+    return file_type, conversion_type
+
+
+def _save_script_to_pending(script_content: str, script_type: str, user_input: str) -> Optional[Path]:
+    """Save generated script to pending folder if storage is enabled."""
+    if not settings.STORE_GENERATED_SCRIPTS:
+        print("⏭️ Script storage disabled (STORE_GENERATED_SCRIPTS=false)")
+        return None
+    
+    pending_dir = Path(settings.PENDING_PATH) / script_type
+    pending_dir.mkdir(parents=True, exist_ok=True)
+    
+    script_filename = f"generated_{script_type}_{hash(user_input)}.py"
+    script_path = pending_dir / script_filename
+    script_path.write_text(script_content)
+    print(f"💾 Script saved to: {script_path}")
+    return script_path
+
+
+@router.post("/generate", response_model=ScriptResponse)
+async def generate_script(
+    request: ScriptRequest,
+    db: Session = Depends(get_db)
+):
+    """Generate or reuse a script."""
+    # Classify script type
+    script_type = _classify_script_type(request)
+    
+    # Try to reuse existing script
+    reused_response = await _try_reuse_existing_script(db, request, script_type)
+    if reused_response:
+        return reused_response
+    
+    # Check if LLM generation is enabled
     if script_type not in IntentClassifier.get_llm_enabled_types():
         raise HTTPException(
             status_code=400,
@@ -221,262 +559,24 @@ async def generate_script(
     
     generated_code = await llm_client.generate_code(prompt)
     
-    print(f"📝 Generated code (full):\n{generated_code}")
-    
-    # Extract only the function definition from the generated code
-    # The LLM might generate extra content, so we need to extract just the function
-    function_start = generated_code.find(f"def {function_name}(")
-    if function_start == -1:
-        # Try without type hints
-        function_start = generated_code.find(f"def {function_name}(")
-    
-    if function_start != -1:
-        # Find the function definition
-        function_code = generated_code[function_start:]
-        
-        # Remove markdown code fences if present
-        function_code = function_code.replace('```python', '').replace('```', '').strip()
-        
-        # Extract just the function (find the end of the function)
-        lines = function_code.split('\n')
-        function_lines = []
-        in_function = False
-        indent_level = None
-        
-        for i, line in enumerate(lines):
-            stripped = line.strip()
-            
-            # Skip empty lines at the start
-            if not in_function and not stripped:
-                continue
-            
-            # Find function start
-            if f"def {function_name}(" in line:
-                in_function = True
-                function_lines.append(line)
-                # Determine base indentation (should be 0 for function definition)
-                indent_level = len(line) - len(line.lstrip())
-                continue
-            
-            if in_function:
-                # Check if we've hit another top-level definition (end of function)
-                if stripped and not line.startswith(' ') and not line.startswith('\t'):
-                    # This is a new top-level definition, stop here
-                    break
-                
-                # Check if line is part of function body
-                current_indent = len(line) - len(line.lstrip())
-                if stripped and current_indent <= indent_level and i > 0:
-                    # This might be outside the function, but could be continuation
-                    # Only break if it's clearly a new definition
-                    if stripped.startswith('def ') or stripped.startswith('class '):
-                        break
-                
-                function_lines.append(line)
-        
-        generated_code = '\n'.join(function_lines).strip()
-        print(f"🧹 Extracted function:\n{generated_code}")
-    else:
-        print(f"⚠️ Warning: Could not find function definition, using full generated code")
-    
-    # Remove any remaining markdown code fences
-    generated_code = generated_code.replace('```python', '').replace('```', '').strip()
-    
-    # Remove any import statements that might still be there
-    lines = generated_code.split('\n')
-    cleaned_lines = []
-    for line in lines:
-        stripped = line.strip()
-        if not (stripped.startswith('import ') or stripped.startswith('from ')):
-            cleaned_lines.append(line)
-    generated_code = '\n'.join(cleaned_lines)
-    
-    # Fix common syntax errors: remove duplicate docstrings and fix indentation
-    # Look for function definition and clean up docstrings
-    if f"def {function_name}(" in generated_code:
-        lines = generated_code.split('\n')
-        cleaned_function_lines = []
-        in_function = False
-        docstring_count = 0
-        seen_first_docstring = False
-        
-        for line in lines:
-            if f"def {function_name}(" in line:
-                in_function = True
-                cleaned_function_lines.append(line)
-                continue
-            
-            if in_function:
-                stripped = line.strip()
-                # Skip duplicate docstrings (keep only first one)
-                if stripped.startswith('"""') or stripped.startswith("'''"):
-                    docstring_count += 1
-                    if docstring_count == 1:
-                        # Keep first docstring
-                        cleaned_function_lines.append(line)
-                    elif docstring_count == 2:
-                        # Skip closing of first docstring if it's immediately followed by another
-                        continue
-                    else:
-                        # Skip all subsequent docstrings
-                        continue
-                else:
-                    cleaned_function_lines.append(line)
-                    # If we see code after a docstring, we're past the first docstring
-                    if docstring_count > 0 and stripped and not stripped.startswith('#'):
-                        seen_first_docstring = True
-                
-                # Stop if we hit another top-level definition
-                if stripped and not line.startswith(' ') and not line.startswith('\t'):
-                    if stripped.startswith('def ') or stripped.startswith('class '):
-                        break
-            else:
-                # Before function, skip everything
-                continue
-        
-        if cleaned_function_lines:
-            generated_code = '\n'.join(cleaned_function_lines)
-            print(f"🔧 Fixed function (removed duplicates):\n{generated_code}")
+    # Process generated code
+    cleaned_code = _process_generated_code(generated_code, function_name)
     
     # Validate generated code
-    is_valid, error_msg = validate_generated_code(generated_code, function_name)
+    is_valid, error_msg = validate_generated_code(cleaned_code, function_name)
     if not is_valid:
         print(f"❌ Validation failed: {error_msg}")
-        print(f"   Generated code:\n{generated_code}")
+        print(f"   Generated code:\n{cleaned_code}")
         raise HTTPException(status_code=400, detail=f"Invalid generated code: {error_msg}")
     
-    # Extract function body (the template expects just the body, indented)
-    function_body = generated_code
-    if f"def {function_name}" in generated_code:
-        # Extract body from function definition
-        lines = generated_code.split('\n')
-        body_started = False
-        body_lines = []
-        in_docstring = False
-        docstring_delimiter = None
-        
-        for line in lines:
-            if f"def {function_name}" in line:
-                body_started = True
-                continue
-            
-            if body_started:
-                stripped = line.lstrip()
-                
-                # Skip empty lines
-                if not stripped:
-                    body_lines.append('')
-                    continue
-                
-                # Handle docstrings (skip them as they're already in the template)
-                if not in_docstring:
-                    # Check if this line starts a docstring
-                    if stripped.startswith('"""') or stripped.startswith("'''"):
-                        in_docstring = True
-                        docstring_delimiter = '"""' if stripped.startswith('"""') else "'''"
-                        # Check if docstring closes on the same line
-                        if stripped.count(docstring_delimiter) >= 2:
-                            in_docstring = False
-                        continue
-                else:
-                    # We're inside a docstring, check if this line closes it
-                    if docstring_delimiter in stripped:
-                        in_docstring = False
-                    continue
-                
-                # Add to body lines (we'll normalize indentation in next step)
-                body_lines.append(line)
-        
-        if body_lines:
-            function_body = '\n'.join(body_lines)
-            print(f"📦 Extracted function body (raw):\n{function_body}")
+    # Extract function body and normalize indentation
+    function_body = _extract_function_body(cleaned_code, function_name)
+    indented_code = _normalize_indentation(function_body)
     
-    # Normalize indentation: find minimum indent and re-indent relative to it
-    # This fixes cases where Gemini generates code with incorrect base indentation
-    lines = function_body.split('\n')
-    
-    # First pass: find minimum indentation (ignoring empty lines)
-    min_indent = None
-    for line in lines:
-        stripped = line.lstrip()
-        if stripped:  # Ignore empty lines
-            current_indent = len(line) - len(stripped)
-            if min_indent is None or current_indent < min_indent:
-                min_indent = current_indent
-    
-    # If no minimum found (all lines empty), default to 0
-    if min_indent is None:
-        min_indent = 0
-    
-    print(f"🔍 Detected minimum indentation: {min_indent} spaces")
-    
-    # Check if code has any control flow structures (if/for/while/try/with)
-    # If not, all lines should be at base level (4 spaces)
-    control_flow_keywords = ['if ', 'for ', 'while ', 'try:', 'except', 'else:', 'elif ', 'with ', 'def ']
-    has_control_flow = any(
-        any(keyword in line for keyword in control_flow_keywords)
-        for line in lines if line.strip()
-    )
-    
-    print(f"🔍 Has control flow structures: {has_control_flow}")
-    
-    # Second pass: normalize all lines
-    final_lines = []
-    for line in lines:
-        stripped = line.lstrip()
-        
-        if not stripped:
-            # Empty line
-            final_lines.append('')
-            continue
-        
-        # Calculate current indentation
-        current_indent = len(line) - len(stripped)
-        
-        if not has_control_flow:
-            # No control flow - all lines should be at base level (4 spaces)
-            # This fixes Gemini's incorrect indentation
-            new_indent = 4
-        elif current_indent == min_indent:
-            # This is a base-level line, normalize to exactly 4 spaces
-            new_indent = 4
-        else:
-            # This line has more indentation than minimum (nested block)
-            # Preserve relative indentation
-            relative_indent = current_indent - min_indent
-            new_indent = 4 + relative_indent
-        
-        final_lines.append(' ' * new_indent + stripped)
-    
-    indented_code = '\n'.join(final_lines)
-    print(f"✅ Final indented code:\n{indented_code}")
+    # Get file type and conversion type
+    file_type, conversion_type = _get_file_type_and_conversion(request, script_type)
     
     # Generate full script from template
-    # Derive file_type and conversion_type from template_id
-    file_type = request.file_type  # Default from request
-    conversion_type = None
-    
-    if request.template_id:
-        # Map template_id to file_type and conversion_type
-        template_file_type_map = {
-            "csv_etl": "csv",
-            "xlsx_etl": "xlsx",
-            "xlsx_to_csv": None,  # Uses conversion_type instead
-            "csv_to_xlsx": None   # Uses conversion_type instead
-        }
-        template_conversion_type_map = {
-            "xlsx_to_csv": "xlsx_to_csv",
-            "csv_to_xlsx": "csv_to_xlsx"
-        }
-        file_type = template_file_type_map.get(request.template_id) or file_type
-        conversion_type = template_conversion_type_map.get(request.template_id)
-        print(f"📄 Template {request.template_id} -> file_type={file_type}, conversion_type={conversion_type}")
-    elif script_type == "format_conversion":
-        if "csv to xlsx" in request.user_input.lower():
-            conversion_type = "csv_to_xlsx"
-        elif "xlsx to csv" in request.user_input.lower():
-            conversion_type = "xlsx_to_csv"
-    
     script_content = TemplateEngine.generate_script(
         script_type,
         file_type,
@@ -484,18 +584,8 @@ async def generate_script(
         conversion_type
     )
     
-    # Write to _pending folder only if storage is enabled
-    script_path = None
-    if settings.STORE_GENERATED_SCRIPTS:
-        pending_dir = Path(settings.PENDING_PATH) / script_type
-        pending_dir.mkdir(parents=True, exist_ok=True)
-        
-        script_filename = f"generated_{script_type}_{hash(request.user_input)}.py"
-        script_path = pending_dir / script_filename
-        script_path.write_text(script_content)
-        print(f"💾 Script saved to: {script_path}")
-    else:
-        print("⏭️ Script storage disabled (STORE_GENERATED_SCRIPTS=false)")
+    # Save to pending folder
+    script_path = _save_script_to_pending(script_content, script_type, request.user_input)
     
     # Get config and usage instructions
     config_content, usage_instructions = _get_config_and_instructions(script_type, conversion_type)
@@ -655,7 +745,7 @@ async def search_scripts(
     search_service = SearchService()
     
     # Build intent summary from query
-    intent_summary = await search_service.build_intent_summary(request.query, None)
+    intent_summary = search_service.build_intent_summary(request.query, None)
     
     # Search for similar scripts (filter by script_type if provided)
     similar_scripts = await search_service.search_all_similar(

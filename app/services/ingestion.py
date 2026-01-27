@@ -3,6 +3,7 @@ Ingestion pipeline for approved scripts from GitHub.
 """
 import json
 import asyncio
+import aiofiles
 from pathlib import Path
 from typing import List, Dict, Optional
 from sqlalchemy.orm import Session
@@ -58,8 +59,9 @@ class IngestionService:
     async def _ingest_script_async(self, metadata_file: Path, db: Session):
         """Ingest a single script (async)."""
         # Load metadata
-        with open(metadata_file, 'r') as f:
-            metadata = json.load(f)
+        async with aiofiles.open(metadata_file, 'r') as f:
+            content = await f.read()
+            metadata = json.loads(content)
         
         # Find script file
         script_dir = metadata_file.parent

@@ -49,7 +49,7 @@ engine = create_engine(settings.DATABASE_URL)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
-async def init_db():
+def init_db():
     """Initialize database tables."""
     try:
         print("Attempting to connect to database...")

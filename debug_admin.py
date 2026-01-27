@@ -55,7 +55,7 @@ def check_and_create_admin():
                     if user:
                         print(f"    ✓ Admin user found! Created at: {user[1]}")
                     else:
-                        print(f"    ✗ Admin user NOT found in this schema")
+                        print("    ✗ Admin user NOT found in this schema")
                 else:
                     print(f"  ✗ users table does NOT exist in '{schema}' schema")
         

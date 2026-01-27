@@ -60,6 +60,23 @@ python script.py
     return config_content, usage_instructions
 
 
+def _is_function_start(stripped_line: str) -> bool:
+    """Check if line is the start of a target function."""
+    return stripped_line.startswith('def convert(') or stripped_line.startswith('def transform(')
+
+
+def _is_docstring_line(stripped_line: str) -> bool:
+    """Check if line is a docstring delimiter."""
+    return stripped_line.startswith('"""') or stripped_line.startswith("'''")
+
+
+def _is_function_end(line: str, stripped_line: str) -> bool:
+    """Check if line indicates end of function (non-indented non-empty line)."""
+    if not stripped_line:
+        return False
+    return not line.startswith(' ') and not line.startswith('\t')
+
+
 def extract_function_body(code: str) -> str:
     """Extract function body from generated code."""
     lines = code.split('\n')
@@ -70,20 +87,21 @@ def extract_function_body(code: str) -> str:
     for line in lines:
         stripped = line.strip()
         
-        if stripped.startswith('def convert(') or stripped.startswith('def transform('):
+        if _is_function_start(stripped):
             in_function = True
             continue
         
-        if in_function:
-            if stripped.startswith('"""') or stripped.startswith("'''"):
-                if not seen_first_docstring:
-                    seen_first_docstring = True
-                    continue
-            
-            if stripped and not line.startswith(' ') and not line.startswith('\t'):
-                break
-            
-            function_lines.append(line)
+        if not in_function:
+            continue
+        
+        if _is_docstring_line(stripped) and not seen_first_docstring:
+            seen_first_docstring = True
+            continue
+        
+        if _is_function_end(line, stripped):
+            break
+        
+        function_lines.append(line)
     
     return '\n'.join(function_lines)
 
@@ -127,7 +145,6 @@ def remove_duplicate_functions(code: str) -> str:
     lines = code.split('\n')
     seen_functions = set()
     result_lines = []
-    current_function = None
     skip_until_next_def = False
     
     for line in lines:
@@ -143,7 +160,6 @@ def remove_duplicate_functions(code: str) -> str:
                     continue
                 else:
                     seen_functions.add(func_name)
-                    current_function = func_name
                     skip_until_next_def = False
         
         if not skip_until_next_def:

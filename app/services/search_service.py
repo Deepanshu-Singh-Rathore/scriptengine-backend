@@ -35,7 +35,7 @@ class SearchService:
         except Exception as e:
             # If embedding fails (e.g., quota exceeded), fall back to text-based search
             print(f"Warning: Embedding generation failed, using text-based search: {str(e)}")
-            return await self._text_based_search(db, intent, script_type)
+            return self._text_based_search(db, intent, script_type)
         
         embedding_str = "[" + ",".join(map(str, embedding)) + "]"
         
@@ -78,7 +78,7 @@ class SearchService:
         
         return None
     
-    async def build_intent_summary(
+    def build_intent_summary(
         self,
         intent: str,
         schema_info: Optional[Dict] = None
@@ -94,7 +94,7 @@ class SearchService:
         
         return " ".join(parts)
     
-    async def _text_based_search(
+    def _text_based_search(
         self,
         db: Session,
         intent: str,
@@ -116,79 +116,73 @@ class SearchService:
             ApprovedScript.script_type == script_type
         ).all()
         
+        best_match, best_similarity = self._find_best_match(
+            scripts, intent_lower, intent_words
+        )
+        
+        self._log_search_result(best_match, best_similarity, intent_words, script_type)
+        
+        # Return match only if similarity is >= 0.8 (80%)
+        if best_match and best_similarity >= 0.8:
+            return self._script_to_dict(best_match, best_similarity)
+        
+        return None
+    
+    def _find_best_match(
+        self,
+        scripts: List[ApprovedScript],
+        intent_lower: str,
+        intent_words: set
+    ) -> tuple:
+        """Find the script with the highest similarity score."""
         best_match = None
         best_similarity = 0.0
         
         for script in scripts:
-            # Collect all text from script metadata
-            all_text_parts = []
-            
-            # Add intent phrases
-            if script.intent:
-                all_text_parts.extend([i.lower() for i in script.intent])
-            
-            # Add description
-            if script.description:
-                all_text_parts.append(script.description.lower())
-            
-            # Add tags
-            if script.tags:
-                all_text_parts.extend([t.lower() for t in script.tags])
-            
-            # Combine all text
-            combined_text = " ".join(all_text_parts)
-            combined_words = set(combined_text.split())
-            
-            # Calculate word overlap
-            matching_words = intent_words.intersection(combined_words)
-            word_similarity = len(matching_words) / len(intent_words) if intent_words else 0
-            
-            # Check for exact phrase matches (boost similarity)
-            phrase_match = False
-            for script_intent in (script.intent or []):
-                if intent_lower in script_intent.lower() or script_intent.lower() in intent_lower:
-                    phrase_match = True
-                    break
-            
-            # Calculate final similarity
-            # Base similarity from word overlap (0-1)
-            # Boost by 0.2 if exact phrase match found
-            similarity = min(word_similarity + (0.2 if phrase_match else 0), 1.0)
-            
+            similarity = self._calculate_text_similarity(intent_lower, intent_words, script)
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_match = script
         
-        # Debug: Print search results
-        if best_match:
-            print(f"📊 Text search: Best match similarity: {best_similarity:.2%} (threshold: 80%)")
-            print(f"   Script: {best_match.repo_path}")
-            print(f"   Intent words: {intent_words}")
+        return best_match, best_similarity
+    
+    def _log_search_result(
+        self,
+        best_match: Optional[ApprovedScript],
+        best_similarity: float,
+        intent_words: set,
+        script_type: str
+    ) -> None:
+        """Log the search result for debugging."""
+        if not best_match:
+            print(f"❌ No matching scripts found for type: {script_type}")
+            return
         
-        # Return match only if similarity is >= 0.8 (80%)
-        if best_match and best_similarity >= 0.8:
+        print(f"📊 Text search: Best match similarity: {best_similarity:.2%} (threshold: 80%)")
+        print(f"   Script: {best_match.repo_path}")
+        print(f"   Intent words: {intent_words}")
+        
+        if best_similarity >= 0.8:
             print(f"✅ Match found with {best_similarity:.2%} similarity")
-            return {
-                "id": str(best_match.id),
-                "script_type": best_match.script_type,
-                "source_format": best_match.source_format,
-                "target_format": best_match.target_format,
-                "domain": best_match.domain,
-                "intent": best_match.intent,
-                "description": best_match.description,
-                "tags": best_match.tags,
-                "repo_path": best_match.repo_path,
-                "config_path": best_match.config_path,
-                "version": best_match.version,
-                "similarity": best_similarity
-            }
         else:
-            if best_match:
-                print(f"❌ Match found but similarity {best_similarity:.2%} is below 80% threshold")
-            else:
-                print(f"❌ No matching scripts found for type: {script_type}")
-        
-        return None
+            print(f"❌ Match found but similarity {best_similarity:.2%} is below 80% threshold")
+    
+    def _script_to_dict(self, script: ApprovedScript, similarity: float) -> Dict:
+        """Convert an ApprovedScript to a dictionary response."""
+        return {
+            "id": str(script.id),
+            "script_type": script.script_type,
+            "source_format": script.source_format,
+            "target_format": script.target_format,
+            "domain": script.domain,
+            "intent": script.intent,
+            "description": script.description,
+            "tags": script.tags,
+            "repo_path": script.repo_path,
+            "config_path": script.config_path,
+            "version": script.version,
+            "similarity": similarity
+        }
 
     async def search_all_similar(
         self,
@@ -269,9 +263,48 @@ class SearchService:
             ]
         except Exception as e:
             print(f"Warning: Embedding search failed, using text-based: {e}")
-            return await self._text_based_search_all(db, intent, limit)
+            return self._text_based_search_all(db, intent, limit)
 
-    async def _text_based_search_all(
+    def _collect_script_text_parts(self, script: ApprovedScript) -> List[str]:
+        """Collect all searchable text from a script's metadata."""
+        parts = []
+        if script.intent:
+            parts.extend([i.lower() for i in script.intent])
+        if script.description:
+            parts.append(script.description.lower())
+        if script.tags:
+            parts.extend([t.lower() for t in script.tags])
+        return parts
+
+    def _calculate_text_similarity(
+        self,
+        intent_lower: str,
+        intent_words: set,
+        script: ApprovedScript
+    ) -> float:
+        """Calculate similarity score between intent and script metadata."""
+        all_text_parts = self._collect_script_text_parts(script)
+        combined_text = " ".join(all_text_parts)
+        combined_words = set(combined_text.split())
+        
+        # Word overlap similarity
+        matching_words = intent_words.intersection(combined_words)
+        word_similarity = len(matching_words) / len(intent_words)
+        
+        # Phrase match boost
+        phrase_boost = self._check_phrase_match(intent_lower, script.intent or [])
+        
+        return min(word_similarity + phrase_boost, 1.0)
+
+    def _check_phrase_match(self, intent_lower: str, script_intents: List[str]) -> float:
+        """Check for phrase match and return boost value."""
+        for script_intent in script_intents:
+            script_intent_lower = script_intent.lower()
+            if intent_lower in script_intent_lower or script_intent_lower in intent_lower:
+                return 0.2
+        return 0.0
+
+    def _text_based_search_all(
         self,
         db: Session,
         intent: str,
@@ -290,29 +323,7 @@ class SearchService:
         scored_scripts = []
         
         for script in scripts:
-            all_text_parts = []
-            if script.intent:
-                all_text_parts.extend([i.lower() for i in script.intent])
-            if script.description:
-                all_text_parts.append(script.description.lower())
-            if script.tags:
-                all_text_parts.extend([t.lower() for t in script.tags])
-            
-            combined_text = " ".join(all_text_parts)
-            combined_words = set(combined_text.split())
-            
-            matching_words = intent_words.intersection(combined_words)
-            word_similarity = len(matching_words) / len(intent_words) if intent_words else 0
-            
-            # Phrase match boost
-            phrase_match = False
-            for script_intent in (script.intent or []):
-                if intent_lower in script_intent.lower() or script_intent.lower() in intent_lower:
-                    phrase_match = True
-                    break
-            
-            similarity = min(word_similarity + (0.2 if phrase_match else 0), 1.0)
-            
+            similarity = self._calculate_text_similarity(intent_lower, intent_words, script)
             if similarity >= 0.3:  # Lower threshold for search
                 scored_scripts.append((script, similarity))
         

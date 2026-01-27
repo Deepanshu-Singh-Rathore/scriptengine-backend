@@ -18,7 +18,7 @@ class LLMPromptBuilder:
         function_name = "convert" if script_type == "conversion" else "transform"
         
         prompt_parts = [
-            f"Generate ONLY a Python function (nothing else).",
+            "Generate ONLY a Python function (nothing else).",
             f"\nIntent: {intent}",
             f"\nScript Type: {script_type}",
         ]
