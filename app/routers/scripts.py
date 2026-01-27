@@ -769,3 +769,67 @@ async def search_scripts(
         results=results,
         total=len(results)
     )
+
+
+class GetScriptRequest(BaseModel):
+    """Request to get script content by repo_path."""
+    repo_path: str
+    script_type: Optional[str] = None
+
+
+class GetScriptResponse(BaseModel):
+    """Response with full script content."""
+    script_content: str
+    config_content: Optional[str] = None
+    usage_instructions: Optional[str] = None
+    repo_path: str
+    script_type: str
+
+
+@router.post("/get_script", response_model=GetScriptResponse)
+async def get_script(request: GetScriptRequest):
+    """
+    Get full script content by repo_path.
+    
+    Args:
+        request: repo_path of the script to fetch
+    
+    Returns:
+        Full script content, config, and usage instructions
+    """
+    # Resolve repo base path
+    repo_base = Path(settings.GITHUB_REPO_PATH)
+    if not repo_base.is_absolute():
+        backend_dir = Path(__file__).parent.parent.parent
+        repo_base = backend_dir.parent / repo_base
+    
+    repo_base = repo_base.resolve()
+    script_path = repo_base / request.repo_path
+    
+    if not script_path.exists():
+        raise HTTPException(
+            status_code=404,
+            detail=f"Script not found: {request.repo_path}"
+        )
+    
+    # Read script content
+    script_content = script_path.read_text()
+    
+    # Try to read config file from same directory
+    config_content = None
+    script_dir = script_path.parent
+    config_files = list(script_dir.glob("*.json.example")) + list(script_dir.glob("config*.json"))
+    if config_files:
+        config_content = config_files[0].read_text()
+    
+    # Get usage instructions
+    script_type = request.script_type or "conversion"
+    _, usage_instructions = _get_config_and_instructions(script_type)
+    
+    return GetScriptResponse(
+        script_content=script_content,
+        config_content=config_content,
+        usage_instructions=usage_instructions,
+        repo_path=request.repo_path,
+        script_type=script_type
+    )
