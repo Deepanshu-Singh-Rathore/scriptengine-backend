@@ -1,0 +1,29 @@
+{
+  "script_type": "etl",
+  "source_format": "csv",
+  "target_format": "csv",
+  "domain": "gcs_etl",
+  "intent": [
+    "rename rows",
+    "index renaming",
+    "csv transformation",
+    "row label change",
+    "csv etl pipeline"
+  ],
+  "description": "ETL script for CSV file processing with row renaming capability. Downloads CSV from GCS, applies transformation (e.g., renaming index labels), archives the original, and uploads the processed file.",
+  "tags": [
+    "csv",
+    "etl",
+    "gcs",
+    "transformation",
+    "row-rename"
+  ],
+  "repo_path": "etl/csv_etl/script.py",
+  "config_path": "etl/csv_etl/config.json.example",
+  "version": "1.0.0",
+  "features": [
+    "CSV row/index renaming",
+    "GCS file archiving",
+    "Optional output file renaming"
+  ]
+}
