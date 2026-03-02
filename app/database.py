@@ -45,7 +45,9 @@ class User(Base):
 
 
 
-engine = create_engine(settings.DATABASE_URL)
+from sqlalchemy.pool import NullPool
+
+engine = create_engine(settings.DATABASE_URL, poolclass=NullPool)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
