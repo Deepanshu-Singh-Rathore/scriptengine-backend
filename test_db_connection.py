@@ -24,7 +24,7 @@ try:
         port=PORT,
         dbname=DBNAME
     )
-    print("✓ Connection successful!")
+    print("[OK] Connection successful!")
     
     # Create a cursor to execute SQL queries
     cursor = connection.cursor()
@@ -32,15 +32,15 @@ try:
     # Test query
     cursor.execute("SELECT NOW();")
     result = cursor.fetchone()
-    print(f"✓ Current Time: {result[0]}")
+    print(f"[OK] Current Time: {result[0]}")
     
     # Check if pgvector extension exists
     cursor.execute("SELECT * FROM pg_extension WHERE extname = 'vector';")
     vector_ext = cursor.fetchone()
     if vector_ext:
-        print("✓ pgvector extension is installed")
+        print("[OK] pgvector extension is installed")
     else:
-        print("⚠ pgvector extension not found - you may need to enable it in Supabase")
+        print("[WARN] pgvector extension not found")
     
     # List existing tables
     cursor.execute("""
@@ -49,12 +49,12 @@ try:
         WHERE table_schema = 'public'
     """)
     tables = cursor.fetchall()
-    print(f"\n✓ Existing tables: {[t[0] for t in tables] if tables else 'None'}")
+    print(f"\n[OK] Existing tables: {[t[0] for t in tables] if tables else 'None'}")
 
     # Close the cursor and connection
     cursor.close()
     connection.close()
-    print("\n✓ Connection closed successfully")
+    print("\n[OK] Connection closed successfully")
 
 except Exception as e:
-    print(f"✗ Failed to connect: {e}")
+    print(f"[ERROR] Failed to connect: {e}")

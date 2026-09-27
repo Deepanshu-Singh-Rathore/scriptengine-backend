@@ -2,11 +2,12 @@
 Script to create initial admin user in the database.
 Run this once after database initialization.
 """
-from app.database import SessionLocal, User
+from app.database import SessionLocal, User, init_db
 from app.utils.auth import get_password_hash
 
 def create_admin_user():
     """Create the initial admin user."""
+    init_db()
     db = SessionLocal()
     try:
         # Check if admin already exists
