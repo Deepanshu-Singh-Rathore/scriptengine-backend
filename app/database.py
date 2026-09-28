@@ -62,13 +62,23 @@ if db_url.startswith("postgres://"):
 elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
     db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
-engine = create_engine(db_url, poolclass=NullPool)
+engine = create_engine(
+    db_url,
+    poolclass=NullPool,
+    connect_args={"connect_timeout": 10}
+)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
 def init_db():
-    """Initialize database tables."""
+    """Initialize database tables if they do not exist."""
     try:
+        from sqlalchemy import inspect
+        inspector = inspect(engine)
+        if inspector.has_table("users", schema=settings.POSTGRES_SCHEMA):
+            print("✓ Database tables already present.")
+            return
+
         print("Attempting to connect to database...")
         with engine.connect() as conn:
             # Create schema if custom schema specified and not default public
