@@ -13,7 +13,7 @@ from app.services.intent_classifier import IntentClassifier
 from app.services.search_service import SearchService
 from app.services.template_engine import TemplateEngine
 from app.services.llm_prompt_builder import LLMPromptBuilder
-from app.llm.gemini_client import GeminiClient
+from app.llm.gemini_client import GeminiClient, GeminiQuotaExceededError, GeminiGenerationError
 from app.llm.guards import validate_generated_code
 from app.config import settings
 from app.services import preview_service
@@ -182,9 +182,11 @@ async def _try_reuse_existing_script(
     repo_base = Path(settings.GITHUB_REPO_PATH)
     if not repo_base.is_absolute():
         backend_dir = Path(__file__).parent.parent.parent
-        repo_base = backend_dir.parent / repo_base
+        repo_base = backend_dir / repo_base
     
-    script_path = repo_base / similar_script["repo_path"]
+    repo_base = repo_base.resolve()
+    clean_repo_path = similar_script["repo_path"].replace("\\", "/")
+    script_path = repo_base / clean_repo_path
     
     if not script_path.exists():
         print(f"Warning: Script file not found at {script_path}")
@@ -516,14 +518,18 @@ def _save_script_to_pending(script_content: str, script_type: str, user_input: s
         print("⏭️ Script storage disabled (STORE_GENERATED_SCRIPTS=false)")
         return None
     
-    pending_dir = Path(settings.PENDING_PATH) / script_type
-    pending_dir.mkdir(parents=True, exist_ok=True)
-    
-    script_filename = f"generated_{script_type}_{hash(user_input)}.py"
-    script_path = pending_dir / script_filename
-    script_path.write_text(script_content)
-    print(f"💾 Script saved to: {script_path}")
-    return script_path
+    try:
+        pending_dir = Path(settings.PENDING_PATH) / script_type
+        pending_dir.mkdir(parents=True, exist_ok=True)
+        
+        script_filename = f"generated_{script_type}_{hash(user_input)}.py"
+        script_path = pending_dir / script_filename
+        script_path.write_text(script_content)
+        print(f"💾 Script saved to: {script_path}")
+        return script_path
+    except Exception as e:
+        print(f"Warning: Failed to save script to pending: {e}")
+        return None
 
 
 @router.post("/generate", response_model=ScriptResponse)
@@ -532,72 +538,95 @@ async def generate_script(
     db: Session = Depends(get_db)
 ):
     """Generate or reuse a script."""
-    # Classify script type
-    script_type = _classify_script_type(request)
-    
-    # Try to reuse existing script
-    reused_response = await _try_reuse_existing_script(db, request, script_type)
-    if reused_response:
-        return reused_response
-    
-    # Check if LLM generation is enabled
-    if script_type not in IntentClassifier.get_llm_enabled_types():
-        raise HTTPException(
-            status_code=400,
-            detail=f"LLM generation not enabled for script type: {script_type}"
+    try:
+        # Classify script type
+        script_type = _classify_script_type(request)
+        
+        # Try to reuse existing script
+        reused_response = await _try_reuse_existing_script(db, request, script_type)
+        if reused_response:
+            return reused_response
+        
+        # Check if LLM generation is enabled
+        if script_type not in IntentClassifier.get_llm_enabled_types():
+            raise HTTPException(
+                status_code=400,
+                detail=f"LLM generation not enabled for script type: {script_type}"
+            )
+        
+        # Generate using LLM
+        llm_client = GeminiClient()
+        function_name = "convert" if script_type in ["conversion", "etl"] else "transform"
+        
+        prompt = LLMPromptBuilder.build_prompt(
+            request.user_input,
+            script_type,
+            request.schema_info
         )
-    
-    # Generate using LLM
-    llm_client = GeminiClient()
-    function_name = "convert" if script_type == "conversion" else "transform"
-    
-    prompt = LLMPromptBuilder.build_prompt(
-        request.user_input,
-        script_type,
-        request.schema_info
-    )
-    
-    generated_code = await llm_client.generate_code(prompt)
-    
-    # Process generated code
-    cleaned_code = _process_generated_code(generated_code, function_name)
-    
-    # Validate generated code
-    is_valid, error_msg = validate_generated_code(cleaned_code, function_name)
-    if not is_valid:
-        print(f"❌ Validation failed: {error_msg}")
-        print(f"   Generated code:\n{cleaned_code}")
-        raise HTTPException(status_code=400, detail=f"Invalid generated code: {error_msg}")
-    
-    # Extract function body and normalize indentation
-    function_body = _extract_function_body(cleaned_code, function_name)
-    indented_code = _normalize_indentation(function_body)
-    
-    # Get file type and conversion type
-    file_type, conversion_type = _get_file_type_and_conversion(request, script_type)
-    
-    # Generate full script from template
-    script_content = TemplateEngine.generate_script(
-        script_type,
-        file_type,
-        indented_code,
-        conversion_type
-    )
-    
-    # Save to pending folder
-    script_path = _save_script_to_pending(script_content, script_type, request.user_input)
-    
-    # Get config and usage instructions
-    config_content, usage_instructions = _get_config_and_instructions(script_type, conversion_type)
-    
-    return ScriptResponse(
-        script_type=script_type,
-        script_content=script_content,
-        reused=False,
-        repo_path=str(script_path.relative_to(settings.GITHUB_REPO_PATH)) if script_path else None,
-        config_content=config_content,
-        usage_instructions=usage_instructions
-    )
+        
+        generated_code = await llm_client.generate_code(prompt)
+        
+        # Process generated code
+        cleaned_code = _process_generated_code(generated_code, function_name)
+        
+        # Validate generated code
+        is_valid, error_msg = validate_generated_code(cleaned_code, function_name)
+        if not is_valid:
+            print(f"❌ Validation failed: {error_msg}")
+            print(f"   Generated code:\n{cleaned_code}")
+            raise HTTPException(status_code=400, detail=f"Invalid generated code: {error_msg}")
+        
+        # Extract function body and normalize indentation
+        function_body = _extract_function_body(cleaned_code, function_name)
+        indented_code = _normalize_indentation(function_body)
+        
+        # Get file type and conversion type
+        file_type, conversion_type = _get_file_type_and_conversion(request, script_type)
+        
+        # Generate full script from template
+        script_content = TemplateEngine.generate_script(
+            script_type,
+            file_type,
+            indented_code,
+            conversion_type
+        )
+        
+        # Save to pending folder
+        script_path = _save_script_to_pending(script_content, script_type, request.user_input)
+        
+        # Get config and usage instructions
+        config_content, usage_instructions = _get_config_and_instructions(script_type, conversion_type)
+        
+        repo_rel_path = None
+        if script_path:
+            try:
+                repo_rel_path = str(script_path.relative_to(settings.GITHUB_REPO_PATH))
+            except Exception:
+                repo_rel_path = str(script_path)
+        
+        return ScriptResponse(
+            script_type=script_type,
+            script_content=script_content,
+            reused=False,
+            repo_path=repo_rel_path,
+            config_content=config_content,
+            usage_instructions=usage_instructions
+        )
+    except HTTPException:
+        raise
+    except GeminiQuotaExceededError as e:
+        print(f"❌ Gemini quota exceeded: {e}")
+        raise HTTPException(status_code=429, detail=str(e))
+    except GeminiGenerationError as e:
+        print(f"❌ Gemini generation failed: {e}")
+        raise HTTPException(status_code=502, detail=f"AI generation failed: {str(e)}")
+    except ValueError as e:
+        print(f"❌ Validation error: {e}")
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        raise HTTPException(status_code=500, detail=f"Failed to generate script: {str(e)}")
 
 
 @router.post("/preview", response_model=PreviewResponse)
@@ -619,41 +648,48 @@ async def preview_transformation(
     Returns:
         Before/after data comparison
     """
-    start_time = time.time()
-    
-    # Validate file size
-    file.file.seek(0, 2)  # Seek to end
-    file_size_mb = file.file.tell() / (1024 * 1024)
-    file.file.seek(0)  # Reset to start
-    
-    if file_size_mb > settings.MAX_UPLOAD_SIZE_MB:
-        raise HTTPException(
-            status_code=400,
-            detail=f"File size ({file_size_mb:.1f}MB) exceeds maximum allowed size ({settings.MAX_UPLOAD_SIZE_MB}MB)"
+    try:
+        start_time = time.time()
+        
+        # Validate file size
+        file.file.seek(0, 2)  # Seek to end
+        file_size_mb = file.file.tell() / (1024 * 1024)
+        file.file.seek(0)  # Reset to start
+        
+        if file_size_mb > settings.MAX_UPLOAD_SIZE_MB:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File size ({file_size_mb:.1f}MB) exceeds maximum allowed size ({settings.MAX_UPLOAD_SIZE_MB}MB)"
+            )
+        
+        # Read sample data
+        df_before = preview_service.read_sample_data(file, start_row, sample_size)
+        
+        # Execute transformation
+        df_after, warnings = preview_service.execute_transformation(df_before, function_code)
+        
+        # Calculate execution time
+        execution_time_ms = (time.time() - start_time) * 1000
+        
+        # Convert to JSON
+        before_json = preview_service.dataframe_to_json(df_before)
+        after_json = preview_service.dataframe_to_json(df_after)
+        
+        return PreviewResponse(
+            before_data=before_json['data'],
+            after_data=after_json['data'],
+            before_columns=before_json['columns'],
+            after_columns=after_json['columns'],
+            rows_processed=len(df_before),
+            execution_time_ms=execution_time_ms,
+            warnings=warnings if warnings else None
         )
-    
-    # Read sample data
-    df_before = preview_service.read_sample_data(file, start_row, sample_size)
-    
-    # Execute transformation
-    df_after, warnings = preview_service.execute_transformation(df_before, function_code)
-    
-    # Calculate execution time
-    execution_time_ms = (time.time() - start_time) * 1000
-    
-    # Convert to JSON
-    before_json = preview_service.dataframe_to_json(df_before)
-    after_json = preview_service.dataframe_to_json(df_after)
-    
-    return PreviewResponse(
-        before_data=before_json['data'],
-        after_data=after_json['data'],
-        before_columns=before_json['columns'],
-        after_columns=after_json['columns'],
-        rows_processed=len(df_before),
-        execution_time_ms=execution_time_ms,
-        warnings=warnings if warnings else None
-    )
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Preview failed: {str(e)}")
 
 
 class ExportRequest(BaseModel):
@@ -805,7 +841,8 @@ async def get_script(request: GetScriptRequest):
         repo_base = backend_dir / repo_base
     
     repo_base = repo_base.resolve()
-    script_path = repo_base / request.repo_path
+    clean_repo_path = request.repo_path.replace("\\", "/")
+    script_path = repo_base / clean_repo_path
     
     if not script_path.exists():
         raise HTTPException(

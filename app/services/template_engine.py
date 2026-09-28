@@ -22,6 +22,12 @@ class TemplateEngine:
         "format_conversion": {
             "csv_to_xlsx": "csv_to_xlsx_template.py",
             "xlsx_to_csv": "xlsx_to_csv_template.py",
+        },
+        "etl": {
+            "csv": "csv_etl_template.py",
+            "csv_simple": "csv_simple_template.py",
+            "xlsx": "xlsx_etl_template.py",
+            "xlsx_simple": "xlsx_simple_template.py",
         }
     }
     
@@ -59,7 +65,7 @@ class TemplateEngine:
         Generate script from template file.
         
         Args:
-            script_type: Type of script (conversion, format_conversion)
+            script_type: Type of script (conversion, format_conversion, etl)
             file_type: File type for conversion (csv, xlsx)
             function_code: AI-generated function body code
             conversion_type: Type for format_conversion (csv_to_xlsx, xlsx_to_csv)
@@ -69,7 +75,7 @@ class TemplateEngine:
         if script_type == "format_conversion":
             template_key = conversion_type or "csv_to_xlsx"
         else:
-            # For conversion, choose between ETL and simple
+            # For conversion and etl, choose between ETL and simple
             if use_etl:
                 template_key = file_type or "csv"
             else:

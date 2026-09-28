@@ -1,10 +1,14 @@
-"""
-FastAPI main application entry point.
-"""
-from fastapi import FastAPI
+import os
+import logging
+import traceback
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from app.routers import scripts, search, auth, templates
 from app.database import init_db
+
+logger = logging.getLogger("uvicorn.error")
 
 app = FastAPI(
     title="Script Engine",
@@ -12,7 +16,25 @@ app = FastAPI(
     version="1.0.0"
 )
 
-import os
+class ExceptionCORSFixMiddleware(BaseHTTPMiddleware):
+    """
+    Middleware that catches all unhandled exceptions and returns a JSON 500 response.
+    Because this middleware is registered before CORSMiddleware, the response generated here
+    flows through CORSMiddleware, ensuring CORS headers (Access-Control-Allow-Origin, etc.)
+    are ALWAYS attached even on 500 Internal Server Errors.
+    """
+    async def dispatch(self, request: Request, call_next):
+        try:
+            return await call_next(request)
+        except Exception as exc:
+            logger.error(f"Unhandled exception on {request.method} {request.url}: {traceback.format_exc()}")
+            return JSONResponse(
+                status_code=500,
+                content={
+                    "detail": str(exc) or "Internal server error occurred",
+                    "error_type": type(exc).__name__
+                }
+            )
 
 # CORS origins configuration
 cors_origins = [
@@ -33,11 +55,14 @@ if frontend_url:
         if url and url not in cors_origins:
             cors_origins.append(url)
 
-# CORS middleware for local development and Vercel/Railway deployments
+# Register ExceptionCORSFixMiddleware first so CORSMiddleware wraps it (executes outside it)
+app.add_middleware(ExceptionCORSFixMiddleware)
+
+# CORS middleware for local development and Vercel/Render deployments
 app.add_middleware(
     CORSMiddleware,
     allow_origins=cors_origins,
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origin_regex=r".*",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

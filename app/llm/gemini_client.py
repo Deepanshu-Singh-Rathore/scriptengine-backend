@@ -32,7 +32,7 @@ class GeminiClient(LLMClient):
             raise ValueError("GEMINI_API_KEY not set")
         genai.configure(api_key=settings.GEMINI_API_KEY)
         # List of models to try in order (prioritize gemini-3.8-flash)
-        self.model_names = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-pro']
+        self.model_names = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-flash-latest']
         self.model = None
         self.embedding_model_names = ['models/gemini-embedding-001', 'models/gemini-embedding-2', 'models/text-embedding-004']
         self.embedding_model_name = self.embedding_model_names[0]
@@ -101,7 +101,16 @@ class GeminiClient(LLMClient):
         """Try to generate content with a given model. Returns response text or raises."""
         try:
             response = model.generate_content(prompt)
-            return response.text.strip()
+            try:
+                if hasattr(response, 'text') and response.text:
+                    return response.text.strip()
+            except Exception:
+                pass
+            if hasattr(response, 'parts') and response.parts:
+                text_parts = [part.text for part in response.parts if hasattr(part, 'text')]
+                if text_parts:
+                    return "".join(text_parts).strip()
+            raise GeminiGenerationError("Empty or filtered response received from Gemini model")
         except google_exceptions.ResourceExhausted as e:
             self._handle_quota_exceeded(e)
     
@@ -116,7 +125,12 @@ class GeminiClient(LLMClient):
             model = genai.GenerativeModel(model_id)
             response = model.generate_content(prompt)
             self.model = model
-            return response.text.strip()
+            try:
+                if hasattr(response, 'text') and response.text:
+                    return response.text.strip()
+            except Exception:
+                pass
+            return None
         except Exception:
             return None
     
@@ -126,6 +140,8 @@ class GeminiClient(LLMClient):
         if self.model is not None:
             try:
                 return self._try_generate_with_model(self.model, prompt)
+            except GeminiQuotaExceededError as e:
+                raise e
             except Exception as e:
                 # If the cached model fails, try to find a new one
                 print(f"Warning: Cached model failed, trying to find new model: {str(e)}")
@@ -139,6 +155,8 @@ class GeminiClient(LLMClient):
                 result = self._try_generate_with_model(model, prompt)
                 self.model = model  # Cache successful model
                 return result
+            except GeminiQuotaExceededError as e:
+                raise e
             except Exception as e:
                 last_error = e
                 continue
@@ -147,6 +165,9 @@ class GeminiClient(LLMClient):
         fallback_result = self._try_fallback_models(prompt)
         if fallback_result is not None:
             return fallback_result
+        
+        if last_error and isinstance(last_error, GeminiQuotaExceededError):
+            raise last_error
         
         raise GeminiGenerationError(f"Gemini generation failed with all models. Last error: {str(last_error)}")
     
