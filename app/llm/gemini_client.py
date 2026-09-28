@@ -34,7 +34,8 @@ class GeminiClient(LLMClient):
         # List of models to try in order (prioritize gemini-2.5-flash)
         self.model_names = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
         self.model = None
-        self.embedding_model_name = 'models/embedding-001'
+        self.embedding_model_names = ['models/gemini-embedding-001', 'models/gemini-embedding-2', 'models/text-embedding-004']
+        self.embedding_model_name = self.embedding_model_names[0]
         # Try to find an available model at initialization
         self._find_available_model()
     
@@ -151,11 +152,17 @@ class GeminiClient(LLMClient):
     
     async def embed(self, text: str) -> List[float]:
         """Generate embedding using Gemini."""
-        try:
-            result = genai.embed_content(
-                model=self.embedding_model_name,
-                content=text
-            )
-            return result['embedding']
-        except Exception as e:
-            raise GeminiEmbeddingError(f"Gemini embedding failed: {str(e)}") from e
+        last_error = None
+        for model_name in self.embedding_model_names:
+            try:
+                result = genai.embed_content(
+                    model=model_name,
+                    content=text
+                )
+                self.embedding_model_name = model_name
+                return result['embedding']
+            except Exception as e:
+                last_error = e
+                continue
+        
+        raise GeminiEmbeddingError(f"Gemini embedding failed with all models: {str(last_error)}")

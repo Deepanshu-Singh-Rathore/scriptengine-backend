@@ -5,6 +5,13 @@ import sys
 import os
 from pathlib import Path
 
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 # Add the backend directory to the path
 backend_dir = Path(__file__).parent
 sys.path.insert(0, str(backend_dir))

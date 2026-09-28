@@ -3,6 +3,13 @@ Authentication utilities for password hashing and JWT tokens.
 """
 from datetime import datetime, timedelta, timezone
 from typing import Optional
+import types
+import bcrypt
+
+# Fix for passlib compatibility with bcrypt >= 4.1.0 (prevents trapped AttributeError)
+if not hasattr(bcrypt, "__about__"):
+    bcrypt.__about__ = types.SimpleNamespace(__version__=getattr(bcrypt, "__version__", "4.0.0"))
+
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 from app.config import settings

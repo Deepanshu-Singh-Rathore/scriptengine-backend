@@ -31,7 +31,7 @@ class Settings:
     
     # Search
     SIMILARITY_THRESHOLD: float = float(os.getenv("SIMILARITY_THRESHOLD", "0.8"))
-    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "1536"))
+    EMBEDDING_DIMENSION: int = int(os.getenv("EMBEDDING_DIMENSION", "3072"))
     
     # Script paths
     PENDING_PATH: str = os.path.join(GITHUB_REPO_PATH, "_pending")

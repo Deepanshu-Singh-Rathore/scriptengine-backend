@@ -1,7 +1,11 @@
-"""
-Script to create initial admin user in the database.
-Run this once after database initialization.
-"""
+import sys
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+        sys.stderr.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
+
 from app.database import SessionLocal, User, init_db
 from app.utils.auth import get_password_hash
 
