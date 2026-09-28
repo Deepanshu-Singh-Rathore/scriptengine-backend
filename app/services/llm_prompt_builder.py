@@ -37,6 +37,8 @@ class LLMPromptBuilder:
             "  - Function signature: def {function_name}(df: pd.DataFrame) -> pd.DataFrame:",
             "  - Function must take exactly one parameter: df (DataFrame)",
             "  - Function must return a DataFrame",
+            "  - For any numerical comparisons, filtering (>, <, >=, <=), or math, ALWAYS convert the column to numeric first using pd.to_numeric(df['col'], errors='coerce')",
+            "  - For string manipulations, ensure column is treated as string using .astype(str) before .str methods",
             "  - DO NOT include any import statements",
             "  - DO NOT include any other code outside the function",
             "  - DO NOT include markdown code fences (```)",

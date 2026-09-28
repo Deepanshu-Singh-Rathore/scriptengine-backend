@@ -49,19 +49,33 @@ def read_sample_data(
         file_extension = file.filename.split('.')[-1].lower()
         
         if file_extension == 'csv':
-            df = pd.read_csv(
-                io.BytesIO(content),
-                dtype=str,
-                skiprows=start_row,
-                nrows=sample_size
-            )
+            try:
+                df = pd.read_csv(
+                    io.BytesIO(content),
+                    skiprows=start_row,
+                    nrows=sample_size
+                )
+            except Exception:
+                df = pd.read_csv(
+                    io.BytesIO(content),
+                    dtype=str,
+                    skiprows=start_row,
+                    nrows=sample_size
+                )
         elif file_extension in ['xlsx', 'xls']:
-            df = pd.read_excel(
-                io.BytesIO(content),
-                dtype=str,
-                skiprows=start_row,
-                nrows=sample_size
-            )
+            try:
+                df = pd.read_excel(
+                    io.BytesIO(content),
+                    skiprows=start_row,
+                    nrows=sample_size
+                )
+            except Exception:
+                df = pd.read_excel(
+                    io.BytesIO(content),
+                    dtype=str,
+                    skiprows=start_row,
+                    nrows=sample_size
+                )
         else:
             raise HTTPException(
                 status_code=400,
