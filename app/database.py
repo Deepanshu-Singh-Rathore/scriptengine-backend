@@ -55,10 +55,12 @@ class User(Base):
 
 from sqlalchemy.pool import NullPool
 
-# Normalize postgres:// to postgresql:// for SQLAlchemy compatibility (common in cloud databases like Neon)
+# Normalize postgres:// and postgresql:// to postgresql+psycopg2:// for SQLAlchemy compatibility
 db_url = settings.DATABASE_URL
 if db_url.startswith("postgres://"):
-    db_url = db_url.replace("postgres://", "postgresql://", 1)
+    db_url = db_url.replace("postgres://", "postgresql+psycopg2://", 1)
+elif db_url.startswith("postgresql://") and not db_url.startswith("postgresql+"):
+    db_url = db_url.replace("postgresql://", "postgresql+psycopg2://", 1)
 
 engine = create_engine(db_url, poolclass=NullPool)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)

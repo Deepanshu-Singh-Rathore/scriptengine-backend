@@ -32,6 +32,7 @@ pgvector==0.2.4
 proto-plus==1.27.0
 protobuf==4.25.8
 psycopg2-binary>=2.9.10
+psycopg[binary]>=3.1.18
 pyasn1==0.6.2
 pyasn1_modules==0.4.2
 pycparser==2.23
