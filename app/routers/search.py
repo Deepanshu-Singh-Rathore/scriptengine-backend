@@ -67,11 +67,11 @@ async def search_scripts(
         SELECT 
             id, script_type, source_format, target_format, domain,
             intent, description, tags, repo_path, config_path, version,
-            1 - (embedding <=> :embedding::vector) as similarity
+            1 - (embedding <=> CAST(:embedding AS vector)) as similarity
         FROM approved_scripts
         WHERE embedding IS NOT NULL
         AND (:script_type IS NULL OR script_type = :script_type)
-        ORDER BY embedding <=> :embedding::vector
+        ORDER BY embedding <=> CAST(:embedding AS vector)
         LIMIT :limit
     """)
     

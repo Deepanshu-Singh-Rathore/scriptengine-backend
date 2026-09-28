@@ -31,8 +31,8 @@ class GeminiClient(LLMClient):
         if not settings.GEMINI_API_KEY:
             raise ValueError("GEMINI_API_KEY not set")
         genai.configure(api_key=settings.GEMINI_API_KEY)
-        # List of models to try in order (prioritize gemini-2.5-flash)
-        self.model_names = ['gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-1.5-pro', 'gemini-pro']
+        # List of models to try in order (prioritize gemini-3.8-flash)
+        self.model_names = ['gemini-3.8-flash', 'gemini-3.5-flash', 'gemini-2.5-flash', 'gemini-1.5-flash', 'gemini-pro']
         self.model = None
         self.embedding_model_names = ['models/gemini-embedding-001', 'models/gemini-embedding-2', 'models/text-embedding-004']
         self.embedding_model_name = self.embedding_model_names[0]

@@ -44,11 +44,11 @@ class SearchService:
             SELECT 
                 id, script_type, source_format, target_format, domain,
                 intent, description, tags, repo_path, config_path, version,
-                1 - (embedding <=> :embedding::vector) as similarity
+                1 - (embedding <=> CAST(:embedding AS vector)) as similarity
             FROM approved_scripts
             WHERE script_type = :script_type
             AND embedding IS NOT NULL
-            ORDER BY embedding <=> :embedding::vector
+            ORDER BY embedding <=> CAST(:embedding AS vector)
             LIMIT 1
         """)
         
@@ -217,10 +217,10 @@ class SearchService:
                     SELECT 
                         id, script_type, source_format, target_format, domain,
                         intent, description, tags, repo_path, config_path, version,
-                        1 - (embedding <=> :embedding::vector) as similarity
+                        1 - (embedding <=> CAST(:embedding AS vector)) as similarity
                     FROM approved_scripts
                     WHERE embedding IS NOT NULL AND script_type = :script_type
-                    ORDER BY embedding <=> :embedding::vector
+                    ORDER BY embedding <=> CAST(:embedding AS vector)
                     LIMIT :limit
                 """)
                 results = db.execute(
@@ -232,17 +232,16 @@ class SearchService:
                     SELECT 
                         id, script_type, source_format, target_format, domain,
                         intent, description, tags, repo_path, config_path, version,
-                        1 - (embedding <=> :embedding::vector) as similarity
+                        1 - (embedding <=> CAST(:embedding AS vector)) as similarity
                     FROM approved_scripts
                     WHERE embedding IS NOT NULL
-                    ORDER BY embedding <=> :embedding::vector
+                    ORDER BY embedding <=> CAST(:embedding AS vector)
                     LIMIT :limit
                 """)
-            
-            results = db.execute(
-                query,
-                {"embedding": embedding_str, "limit": limit}
-            ).fetchall()
+                results = db.execute(
+                    query,
+                    {"embedding": embedding_str, "limit": limit}
+                ).fetchall()
             
             return [
                 {
