@@ -47,7 +47,12 @@ class User(Base):
 
 from sqlalchemy.pool import NullPool
 
-engine = create_engine(settings.DATABASE_URL, poolclass=NullPool)
+# Normalize postgres:// to postgresql:// for SQLAlchemy compatibility (common in cloud databases like Neon)
+db_url = settings.DATABASE_URL
+if db_url.startswith("postgres://"):
+    db_url = db_url.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(db_url, poolclass=NullPool)
 SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
 
@@ -56,15 +61,19 @@ def init_db():
     try:
         print("Attempting to connect to database...")
         with engine.connect() as conn:
-            # Create schema if it doesn't exist
-            conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {settings.POSTGRES_SCHEMA}"))
-            conn.commit()
+            # Create schema if custom schema specified and not default public
+            if settings.POSTGRES_SCHEMA and settings.POSTGRES_SCHEMA != "public":
+                conn.execute(text(f"CREATE SCHEMA IF NOT EXISTS {settings.POSTGRES_SCHEMA}"))
+                conn.commit()
             
-            # Enable pgvector extension in public schema (extensions are database-wide)
-            conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector SCHEMA public"))
-            conn.commit()
+            # Enable pgvector extension (supported natively by Neon and PostgreSQL)
+            try:
+                conn.execute(text("CREATE EXTENSION IF NOT EXISTS vector"))
+                conn.commit()
+            except Exception as ext_err:
+                print(f"Notice on CREATE EXTENSION: {ext_err}")
             
-            # Set search_path to include both schemas (test01 first, then public for vector type)
+            # Set search_path to include schema and public for vector type
             conn.execute(text(f"SET search_path TO {settings.POSTGRES_SCHEMA}, public"))
             conn.commit()
         

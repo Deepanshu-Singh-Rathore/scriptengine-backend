@@ -1,5 +1,5 @@
 """
-Test Supabase database connection.
+Test PostgreSQL / Neon database connection.
 """
 import psycopg2
 from dotenv import load_dotenv
@@ -8,22 +8,32 @@ import os
 # Load environment variables from .env
 load_dotenv()
 
-# Fetch variables
-USER = os.getenv("POSTGRES_USER", "postgres")
-PASSWORD = os.getenv("POSTGRES_PASSWORD")
-HOST = os.getenv("POSTGRES_HOST")
-PORT = os.getenv("POSTGRES_PORT", "5432")
-DBNAME = os.getenv("POSTGRES_DB", "postgres")
+database_url = os.getenv("DATABASE_URL")
+if database_url and database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
 
 # Connect to the database
 try:
-    connection = psycopg2.connect(
-        user=USER,
-        password=PASSWORD,
-        host=HOST,
-        port=PORT,
-        dbname=DBNAME
-    )
+    if database_url:
+        # Mask password in log output
+        masked_url = database_url
+        if "@" in database_url:
+            masked_url = "postgresql://***@" + database_url.split("@")[-1]
+        print(f"Connecting to: {masked_url}")
+        connection = psycopg2.connect(database_url)
+    else:
+        USER = os.getenv("POSTGRES_USER", "postgres")
+        PASSWORD = os.getenv("POSTGRES_PASSWORD")
+        HOST = os.getenv("POSTGRES_HOST")
+        PORT = os.getenv("POSTGRES_PORT", "5432")
+        DBNAME = os.getenv("POSTGRES_DB", "postgres")
+        connection = psycopg2.connect(
+            user=USER,
+            password=PASSWORD,
+            host=HOST,
+            port=PORT,
+            dbname=DBNAME
+        )
     print("[OK] Connection successful!")
     
     # Create a cursor to execute SQL queries
